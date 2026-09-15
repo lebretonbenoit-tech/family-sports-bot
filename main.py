@@ -8,8 +8,8 @@ Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante grat
 Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
+  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
 """
 
 import os
@@ -49,6 +49,33 @@ CLUB_WIN_EMOJI = {
     "Barcelona": "🔵🔴",
     "Marseille": "🐟",
     "Bayern Munich": "🍺",
+}
+
+RACE_NAME_FR = {
+    "Bahrain Grand Prix": "Grand Prix de Bahreïn",
+    "Saudi Arabian Grand Prix": "Grand Prix d'Arabie Saoudite",
+    "Australian Grand Prix": "Grand Prix d'Australie",
+    "Chinese Grand Prix": "Grand Prix de Chine",
+    "Japanese Grand Prix": "Grand Prix du Japon",
+    "Miami Grand Prix": "Grand Prix de Miami",
+    "Canadian Grand Prix": "Grand Prix du Canada",
+    "Monaco Grand Prix": "Grand Prix de Monaco",
+    "Spanish Grand Prix": "Grand Prix d'Espagne",
+    "Austrian Grand Prix": "Grand Prix d'Autriche",
+    "British Grand Prix": "Grand Prix de Grande-Bretagne",
+    "Belgian Grand Prix": "Grand Prix de Belgique",
+    "Hungarian Grand Prix": "Grand Prix de Hongrie",
+    "Dutch Grand Prix": "Grand Prix des Pays-Bas",
+    "Italian Grand Prix": "Grand Prix d'Italie",
+    "Madrid Grand Prix": "Grand Prix de Madrid",
+    "Azerbaijan Grand Prix": "Grand Prix d'Azerbaïdjan",
+    "Singapore Grand Prix": "Grand Prix de Singapour",
+    "United States Grand Prix": "Grand Prix des États-Unis",
+    "Mexico City Grand Prix": "Grand Prix de Mexico",
+    "São Paulo Grand Prix": "Grand Prix de São Paulo",
+    "Las Vegas Grand Prix": "Grand Prix de Las Vegas",
+    "Qatar Grand Prix": "Grand Prix du Qatar",
+    "Abu Dhabi Grand Prix": "Grand Prix d'Abou Dabi",
 }
 
 
@@ -207,30 +234,29 @@ def check_f1(state):
         return
 
     results = race["Results"]
-    lines = [f"<b>🏎️ F1 • {race['raceName']} ({race['season']})</b>"]
+    race_name_fr = RACE_NAME_FR.get(race["raceName"], race["raceName"])
+    lines = [f"<b>🏁 F1 • {race_name_fr} ({race['season']})</b>"]
 
-    watched_drivers = [r for r in results if r["Driver"]["familyName"] in CONFIG["f1_drivers"]]
-    watched_teams_results = [r for r in results if r["Constructor"]["name"] in CONFIG["f1_teams"]]
-
-    for r in watched_drivers:
-        lines.append(f"🏁 {r['Driver']['familyName']} ({r['Constructor']['name']}) : P{r['position']}")
-
-    if watched_teams_results:
-        best_by_team = {}
-        for r in watched_teams_results:
-            team = r["Constructor"]["name"]
-            if team not in best_by_team or int(r["position"]) < int(best_by_team[team]["position"]):
-                best_by_team[team] = r
-        for team, r in best_by_team.items():
-            lines.append(f"🔧 Meilleure place {team} : P{r['position']} ({r['Driver']['familyName']})")
+    podium = sorted(results, key=lambda r: int(r["position"]))[:3]
+    lines.append("\n🏆 Podium :")
+    for r in podium:
+        lines.append(f"{r['position']}. {r['Driver']['familyName']} ({r['Constructor']['name']})")
 
     standings = requests.get(f"{base}/current/driverStandings.json", timeout=15).json()
     try:
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
-        lines.append("\n📊 Classement pilotes (top des suivis) :")
-        for d in driver_standings:
-            if d["Driver"]["familyName"] in CONFIG["f1_drivers"]:
-                lines.append(f" {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+        lines.append("\n📊 Classement pilotes (top 3) :")
+        for d in driver_standings[:3]:
+            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+    except (KeyError, IndexError):
+        pass
+
+    constructor_standings_data = requests.get(f"{base}/current/constructorStandings.json", timeout=15).json()
+    try:
+        constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
+        lines.append("\n📊 Classement constructeurs (top 3) :")
+        for c in constructor_standings[:3]:
+            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -250,4 +276,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

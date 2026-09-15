@@ -8,13 +8,15 @@ Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante grat
 Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN -> token du bot (via @BotFather)
+  TELEGRAM_CHAT_ID -> id du canal privé (ex: -1001234567890)
 """
 
 import os
 import json
 import requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 STATE_FILE = "state.json"
 
@@ -47,8 +49,8 @@ FOOTBALL_LEAGUES = {
 CLUB_WIN_EMOJI = {
     "Manchester United": "😈",
     "Barcelona": "🔵🔴",
-    "Marseille": "🐟",
-    "Bayern Munich": "🍺",
+    "Marseille": "⚪🔵",
+    "Bayern Munich": "🔴⚪",
 }
 
 RACE_NAME_FR = {
@@ -78,12 +80,39 @@ RACE_NAME_FR = {
     "Abu Dhabi Grand Prix": "Grand Prix d'Abou Dabi",
 }
 
+RACE_FLAG = {
+    "Bahrain Grand Prix": "🇧🇭",
+    "Saudi Arabian Grand Prix": "🇸🇦",
+    "Australian Grand Prix": "🇦🇺",
+    "Chinese Grand Prix": "🇨🇳",
+    "Japanese Grand Prix": "🇯🇵",
+    "Miami Grand Prix": "🇺🇸",
+    "Canadian Grand Prix": "🇨🇦",
+    "Monaco Grand Prix": "🇲🇨",
+    "Spanish Grand Prix": "🇪🇸",
+    "Austrian Grand Prix": "🇦🇹",
+    "British Grand Prix": "🇬🇧",
+    "Belgian Grand Prix": "🇧🇪",
+    "Hungarian Grand Prix": "🇭🇺",
+    "Dutch Grand Prix": "🇳🇱",
+    "Italian Grand Prix": "🇮🇹",
+    "Madrid Grand Prix": "🇪🇸",
+    "Azerbaijan Grand Prix": "🇦🇿",
+    "Singapore Grand Prix": "🇸🇬",
+    "United States Grand Prix": "🇺🇸",
+    "Mexico City Grand Prix": "🇲🇽",
+    "São Paulo Grand Prix": "🇧🇷",
+    "Las Vegas Grand Prix": "🇺🇸",
+    "Qatar Grand Prix": "🇶🇦",
+    "Abu Dhabi Grand Prix": "🇦🇪",
+}
+
 
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"nba": [], "nfl": [], "football": [], "f1": []}
+    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": ""}
 
 
 def save_state(state):
@@ -121,21 +150,20 @@ def check_nba(state):
         heat = next(c for c in competitors if c["team"]["displayName"] == CONFIG["nba_team"])
         opp = next(c for c in competitors if c["team"]["displayName"] != CONFIG["nba_team"])
         heat_score, opp_score = int(heat["score"]), int(opp["score"])
-        result = "Victoire 🔥" if heat_score > opp_score else "Défaite 🙈"
 
         leaders = heat.get("leaders", [])
         top_scorer_line = ""
         if leaders:
             pts_leader = leaders[0]["leaders"][0]
-            top_scorer_line = f"\n🏀 Top marqueur Miami : {pts_leader['athlete']['displayName']} — {pts_leader['displayValue']}"
+            top_scorer_line = f"\n\n🏀 Top marqueur Miami : {pts_leader['athlete']['displayName']} — {pts_leader['displayValue']}"
 
         heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
         msg = (
-            f"<b>🏀 NBA • {result}</b>\n"
+            f"<b>🏀 NBA</b>\n\n"
             f"{CONFIG['nba_team']} {heat_score} - {opp_score} {opp['team']['displayName']}"
-            f"{top_scorer_line}\n"
-            f"📊 Bilan Miami : {heat_record}"
+            f"{top_scorer_line}"
+            f"\n\n📊 Bilan Miami : {heat_record}"
         )
         send_message(msg)
         state["nba"].append(game_id)
@@ -159,21 +187,20 @@ def check_nfl(state):
         broncos = next(c for c in competitors if c["team"]["displayName"] == CONFIG["nfl_team"])
         opp = next(c for c in competitors if c["team"]["displayName"] != CONFIG["nfl_team"])
         b_score, o_score = int(broncos["score"]), int(opp["score"])
-        result = "Victoire 🐴" if b_score > o_score else "Défaite 🙈"
 
         leaders = broncos.get("leaders", [])
         top_player_line = ""
         if leaders:
             leader = leaders[0]["leaders"][0]
-            top_player_line = f"\n🏈 Meilleur joueur Denver : {leader['athlete']['displayName']} — {leader['displayValue']}"
+            top_player_line = f"\n\n🏈 Meilleur joueur Denver : {leader['athlete']['displayName']} — {leader['displayValue']}"
 
         broncos_record = broncos.get("records", [{}])[0].get("summary", "N/A")
 
         msg = (
-            f"<b>🏈 NFL • {result}</b>\n"
+            f"<b>🏈 NFL</b>\n\n"
             f"{CONFIG['nfl_team']} {b_score} - {o_score} {opp['team']['displayName']}"
-            f"{top_player_line}\n"
-            f"📊 Bilan Denver : {broncos_record}"
+            f"{top_player_line}"
+            f"\n\n📊 Bilan Denver : {broncos_record}"
         )
         send_message(msg)
         state["nfl"].append(game_id)
@@ -199,22 +226,29 @@ def check_football(state):
             home = next(c for c in competitors if c["homeAway"] == "home")
             away = next(c for c in competitors if c["homeAway"] == "away")
 
-            followed = next(c for c in competitors if c["team"]["displayName"] in clubs)
-            other = home if followed is away else away
-            f_score, o_score = int(followed["score"]), int(other["score"])
-            if f_score > o_score:
-                win_emoji = CLUB_WIN_EMOJI.get(followed["team"]["displayName"], "😁")
-                result_text = f"Victoire {win_emoji}"
-            elif f_score < o_score:
-                result_text = "Défaite 🙈"
-            else:
-                result_text = "Nul"
+            title = f"⚽ {meta['name']} {meta['flag']}"
 
-            title = f"⚽ {meta['flag']} {meta['name']} • {result_text}"
+            scorers_lines = []
+            team_names_by_id = {c["team"]["id"]: c["team"]["displayName"] for c in competitors}
+            details = event["competitions"][0].get("details", [])
+            goals = [d for d in details if d.get("scoringPlay")]
+            goals.sort(key=lambda d: d.get("clock", {}).get("value", 0))
+            for goal in goals:
+                minute = goal.get("clock", {}).get("displayValue", "?")
+                scorer_team = team_names_by_id.get(goal.get("team", {}).get("id"), "?")
+                athletes = goal.get("athletesInvolved", [])
+                scorer_name = athletes[0]["displayName"] if athletes else "?"
+                og = " (csc)" if goal.get("ownGoal") else ""
+                scorers_lines.append(f"{minute} {scorer_name}{og} ({scorer_team})")
+
+            scorers_block = ""
+            if scorers_lines:
+                scorers_block = "\n\n⚽ Buts :\n" + "\n".join(scorers_lines)
 
             msg = (
-                f"<b>{title}</b>\n"
+                f"<b>{title}</b>\n\n"
                 f"{home['team']['displayName']} {home['score']} - {away['score']} {away['team']['displayName']}"
+                f"{scorers_block}"
             )
             send_message(msg)
             state["football"].append(game_id)
@@ -235,7 +269,8 @@ def check_f1(state):
 
     results = race["Results"]
     race_name_fr = RACE_NAME_FR.get(race["raceName"], race["raceName"])
-    lines = [f"<b>🏁 F1 • {race_name_fr} ({race['season']})</b>"]
+    race_flag = RACE_FLAG.get(race["raceName"], "")
+    lines = [f"<b>🏁 F1 • {race_name_fr} {race_flag} ({race['season']})</b>"]
 
     podium = sorted(results, key=lambda r: int(r["position"]))[:3]
     lines.append("\n🏆 Podium :")
@@ -247,7 +282,7 @@ def check_f1(state):
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
         lines.append("\n📊 Classement pilotes (top 3) :")
         for d in driver_standings[:3]:
-            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+            lines.append(f" {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -256,7 +291,7 @@ def check_f1(state):
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
         lines.append("\n📊 Classement constructeurs (top 3) :")
         for c in constructor_standings[:3]:
-            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
+            lines.append(f" {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -264,9 +299,80 @@ def check_f1(state):
     state["f1"].append(race_id)
 
 
+def check_matchday_announcement(state):
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    if state.get("matchday_sent_date") == today_str:
+        return
+    if now_paris.hour != 9:
+        return
+
+    date_param = now_paris.strftime("%Y%m%d")
+    matches_today = []
+
+    url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_param}"
+    data = requests.get(url, timeout=15).json()
+    for event in data.get("events", []):
+        teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
+        if CONFIG["nba_team"] in teams:
+            opp = next(t for t in teams if t != CONFIG["nba_team"])
+            matches_today.append(f"🏀 NBA : {CONFIG['nba_team']} vs {opp}")
+
+    url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_param}"
+    data = requests.get(url, timeout=15).json()
+    for event in data.get("events", []):
+        teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
+        if CONFIG["nfl_team"] in teams:
+            opp = next(t for t in teams if t != CONFIG["nfl_team"])
+            matches_today.append(f"🏈 NFL : {CONFIG['nfl_team']} vs {opp}")
+
+    for league, clubs in CONFIG["football_clubs"].items():
+        meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
+        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_param}"
+        data = requests.get(url, timeout=15).json()
+        for event in data.get("events", []):
+            teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
+            followed = next((club for club in clubs if club in teams), None)
+            if followed:
+                opp = next(t for t in teams if t != followed)
+                matches_today.append(f"⚽ {meta['name']} {meta['flag']} {followed} vs {opp}")
+
+    has_race = False
+    try:
+        base = "https://api.jolpi.ca/ergast/f1"
+        next_race_data = requests.get(f"{base}/current/next.json", timeout=15).json()
+        race = next_race_data["MRData"]["RaceTable"]["Races"][0]
+        if race["date"] == now_paris.strftime("%Y-%m-%d"):
+            race_name_fr = RACE_NAME_FR.get(race["raceName"], race["raceName"])
+            race_flag = RACE_FLAG.get(race["raceName"], "")
+            matches_today.append(f"🏁 F1 : {race_name_fr} {race_flag}")
+            has_race = True
+    except (KeyError, IndexError):
+        pass
+
+    state["matchday_sent_date"] = today_str
+
+    if matches_today:
+        nb_matches = len(matches_today) - (1 if has_race else 0)
+        if has_race and nb_matches == 0:
+            titre = "Aujourd'hui, jour de course !"
+        elif has_race and nb_matches == 1:
+            titre = "Aujourd'hui, jour de course et de match !"
+        elif has_race:
+            titre = "Aujourd'hui, jour de course et de matchs !"
+        elif nb_matches == 1:
+            titre = "Aujourd'hui, jour de match !"
+        else:
+            titre = "Aujourd'hui, jour de matchs !"
+        lines = [f"<b>📅 {titre}</b>", ""]
+        lines.extend(matches_today)
+        send_message("\n".join(lines))
+
+
 def main():
     state = load_state()
-    for check in (check_nba, check_nfl, check_football, check_f1):
+    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement):
         try:
             check(state)
         except Exception as e:

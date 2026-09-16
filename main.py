@@ -32,6 +32,7 @@ CONFIG = {
         "ger.1": ["Bayern Munich"],
         "eng.1": ["Manchester United"],
         "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
+        "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
     },
     "national_team": "France",
     "f1_teams": ["Red Bull", "Alpine"],
@@ -47,7 +48,8 @@ FOOTBALL_LEAGUES = {
     "fra.1": {"name": "Ligue 1", "flag": "🇫🇷"},
     "ger.1": {"name": "Bundesliga", "flag": "🇩🇪"},
     "eng.1": {"name": "Premier League", "flag": "🇬🇧"},
-    "uefa.champions": {"name": "Champions League", "flag": "🇪🇺"},
+    "uefa.champions": {"name": "Champions League", "flag": "🌟"},
+    "uefa.europa": {"name": "Europa League", "flag": "🏆"},
 }
 
 CLUB_WIN_EMOJI = {

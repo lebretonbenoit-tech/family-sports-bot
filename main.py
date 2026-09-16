@@ -8,8 +8,8 @@ Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante grat
 Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN -> token du bot (via @BotFather)
+  TELEGRAM_CHAT_ID -> id du canal privé (ex: -1001234567890)
 """
 
 import os
@@ -136,6 +136,13 @@ def send_message(text):
         print(f"[!] Erreur envoi Telegram : {r.status_code} {r.text}")
 
 
+def name_matches(keyword, full_name):
+    """Compare par mot-clé plutôt que par égalité stricte, car l'API peut
+    renvoyer un nom complet différent de celui saisi dans CONFIG
+    (ex: 'FC Barcelona' pour la clé 'Barcelona')."""
+    return keyword.lower() in full_name.lower()
+
+
 def check_nba(state):
     url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
     data = requests.get(url, timeout=15).json()
@@ -143,7 +150,7 @@ def check_nba(state):
     for event in data.get("events", []):
         competitors = event["competitions"][0]["competitors"]
         teams = [c["team"]["displayName"] for c in competitors]
-        if CONFIG["nba_team"] not in teams:
+        if not any(name_matches(CONFIG["nba_team"], t) for t in teams):
             continue
         if event["status"]["type"]["name"] != "STATUS_FINAL":
             continue
@@ -151,8 +158,8 @@ def check_nba(state):
         if game_id in state["nba"]:
             continue
 
-        heat = next(c for c in competitors if c["team"]["displayName"] == CONFIG["nba_team"])
-        opp = next(c for c in competitors if c["team"]["displayName"] != CONFIG["nba_team"])
+        heat = next(c for c in competitors if name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
+        opp = next(c for c in competitors if not name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
         heat_score, opp_score = int(heat["score"]), int(opp["score"])
 
         leaders = heat.get("leaders", [])
@@ -180,7 +187,7 @@ def check_nfl(state):
     for event in data.get("events", []):
         competitors = event["competitions"][0]["competitors"]
         teams = [c["team"]["displayName"] for c in competitors]
-        if CONFIG["nfl_team"] not in teams:
+        if not any(name_matches(CONFIG["nfl_team"], t) for t in teams):
             continue
         if event["status"]["type"]["name"] != "STATUS_FINAL":
             continue
@@ -188,8 +195,8 @@ def check_nfl(state):
         if game_id in state["nfl"]:
             continue
 
-        broncos = next(c for c in competitors if c["team"]["displayName"] == CONFIG["nfl_team"])
-        opp = next(c for c in competitors if c["team"]["displayName"] != CONFIG["nfl_team"])
+        broncos = next(c for c in competitors if name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
+        opp = next(c for c in competitors if not name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
         b_score, o_score = int(broncos["score"]), int(opp["score"])
 
         leaders = broncos.get("leaders", [])
@@ -219,7 +226,7 @@ def check_football(state):
         for event in data.get("events", []):
             competitors = event["competitions"][0]["competitors"]
             names = [c["team"]["displayName"] for c in competitors]
-            if not any(club in names for club in clubs):
+            if not any(name_matches(club, n) for club in clubs for n in names):
                 continue
             if event["status"]["type"]["name"] != "STATUS_FULL_TIME":
                 continue
@@ -286,7 +293,7 @@ def check_f1(state):
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
         lines.append("\n📊 Classement pilotes (top 3) :")
         for d in driver_standings[:3]:
-            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+            lines.append(f" {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -295,7 +302,7 @@ def check_f1(state):
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
         lines.append("\n📊 Classement constructeurs (top 3) :")
         for c in constructor_standings[:3]:
-            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
+            lines.append(f" {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -319,16 +326,16 @@ def check_matchday_announcement(state):
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
         teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
-        if CONFIG["nba_team"] in teams:
-            opp = next(t for t in teams if t != CONFIG["nba_team"])
+        if any(name_matches(CONFIG["nba_team"], t) for t in teams):
+            opp = next(t for t in teams if not name_matches(CONFIG["nba_team"], t))
             matches_today.append(f"🏀 NBA : {CONFIG['nba_team']} vs {opp}")
 
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_param}"
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
         teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
-        if CONFIG["nfl_team"] in teams:
-            opp = next(t for t in teams if t != CONFIG["nfl_team"])
+        if any(name_matches(CONFIG["nfl_team"], t) for t in teams):
+            opp = next(t for t in teams if not name_matches(CONFIG["nfl_team"], t))
             matches_today.append(f"🏈 NFL : {CONFIG['nfl_team']} vs {opp}")
 
     for league, clubs in CONFIG["football_clubs"].items():
@@ -337,7 +344,7 @@ def check_matchday_announcement(state):
         data = requests.get(url, timeout=15).json()
         for event in data.get("events", []):
             teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
-            followed = next((club for club in clubs if club in teams), None)
+            followed = next((t for t in teams if any(name_matches(club, t) for club in clubs)), None)
             if followed:
                 opp = next(t for t in teams if t != followed)
                 matches_today.append(f"⚽ {meta['name']} {meta['flag']} {followed} vs {opp}")

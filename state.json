@@ -1,8 +1,13 @@
 {
   "nba": [],
   "nfl": [],
-  "football": [],
-  "f1": [],
-  "matchday_sent_date": "",
-  "birthday_sent_date": ""
+  "football": [
+    "401915443",
+    "401915442"
+  ],
+  "f1": [
+    "2026_14"
+  ],
+  "matchday_sent_date": "2026-09-16",
+  "birthday_sent_date": "2026-09-16"
 }

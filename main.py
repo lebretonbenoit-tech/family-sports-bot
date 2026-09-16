@@ -128,12 +128,14 @@ def send_message(text):
     if not BOT_TOKEN or not CHAT_ID:
         print("[!] TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant — message non envoyé :")
         print(text)
-        return
+        return False
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
     r = requests.post(url, json=payload, timeout=15)
     if not r.ok:
         print(f"[!] Erreur envoi Telegram : {r.status_code} {r.text}")
+        return False
+    return True
 
 
 def name_matches(keyword, full_name):
@@ -362,8 +364,6 @@ def check_matchday_announcement(state):
     except (KeyError, IndexError):
         pass
 
-    state["matchday_sent_date"] = today_str
-
     if matches_today:
         nb_matches = len(matches_today) - (1 if has_race else 0)
         if has_race and nb_matches == 0:
@@ -378,7 +378,10 @@ def check_matchday_announcement(state):
             titre = "Aujourd'hui, jour de matchs !"
         lines = [f"<b>📅 {titre}</b>", ""]
         lines.extend(matches_today)
-        send_message("\n".join(lines))
+        if send_message("\n".join(lines)):
+            state["matchday_sent_date"] = today_str
+    else:
+        state["matchday_sent_date"] = today_str
 
 
 def check_birthday_announcement(state):
@@ -400,10 +403,11 @@ def check_birthday_announcement(state):
         if person.get("nameday") == today_md:
             lines.append(f"🎉 Aujourd'hui, c'est la fête de {person['name']} !")
 
-    state["birthday_sent_date"] = today_str
-
     if lines:
-        send_message("\n".join(lines))
+        if send_message("\n".join(lines)):
+            state["birthday_sent_date"] = today_str
+    else:
+        state["birthday_sent_date"] = today_str
 
 
 def main():

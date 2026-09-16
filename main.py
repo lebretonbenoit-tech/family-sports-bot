@@ -8,8 +8,8 @@ Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante grat
 Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
+  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
 """
 
 import os
@@ -36,6 +36,10 @@ CONFIG = {
     "national_team": "France",
     "f1_teams": ["Red Bull", "Alpine"],
     "f1_drivers": ["Leclerc", "Hamilton", "Verstappen"],
+    "people": [
+        {"name": "Arthur", "birth_date": "11-06", "birth_year": 2011, "nameday": "11-15"},
+        {"name": "Benoit", "birth_date": "06-10", "birth_year": 1983, "nameday": "07-11"},
+    ],
 }
 
 FOOTBALL_LEAGUES = {
@@ -112,7 +116,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": ""}
+    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": ""}
 
 
 def save_state(state):
@@ -282,7 +286,7 @@ def check_f1(state):
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
         lines.append("\n📊 Classement pilotes (top 3) :")
         for d in driver_standings[:3]:
-            lines.append(f" {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -291,7 +295,7 @@ def check_f1(state):
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
         lines.append("\n📊 Classement constructeurs (top 3) :")
         for c in constructor_standings[:3]:
-            lines.append(f" {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
+            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -305,7 +309,7 @@ def check_matchday_announcement(state):
 
     if state.get("matchday_sent_date") == today_str:
         return
-    if now_paris.hour != 9:
+    if now_paris.hour < 9:
         return
 
     date_param = now_paris.strftime("%Y%m%d")
@@ -370,9 +374,34 @@ def check_matchday_announcement(state):
         send_message("\n".join(lines))
 
 
+def check_birthday_announcement(state):
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    if state.get("birthday_sent_date") == today_str:
+        return
+    if now_paris.hour < 7:
+        return
+
+    today_md = now_paris.strftime("%m-%d")
+    lines = []
+
+    for person in CONFIG["people"]:
+        if person.get("birth_date") == today_md:
+            age = now_paris.year - person["birth_year"]
+            lines.append(f"🎂 Aujourd'hui, c'est le {age}e anniversaire de {person['name']} !")
+        if person.get("nameday") == today_md:
+            lines.append(f"🎉 Aujourd'hui, c'est la fête de {person['name']} !")
+
+    state["birthday_sent_date"] = today_str
+
+    if lines:
+        send_message("\n".join(lines))
+
+
 def main():
     state = load_state()
-    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement):
+    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement):
         try:
             check(state)
         except Exception as e:

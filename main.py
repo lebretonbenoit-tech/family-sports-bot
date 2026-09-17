@@ -15,7 +15,7 @@ Variables d'environnement nécessaires :
 import os
 import json
 import requests
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 STATE_FILE = "state.json"
@@ -118,7 +118,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": ""}
+    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "", "special_day_sent_date": ""}
 
 
 def save_state(state):
@@ -329,29 +329,34 @@ def check_matchday_announcement(state):
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_param}"
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
-        teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
+        competitors = event["competitions"][0]["competitors"]
+        teams = [c["team"]["displayName"] for c in competitors]
         if any(name_matches(CONFIG["nba_team"], t) for t in teams):
-            opp = next(t for t in teams if not name_matches(CONFIG["nba_team"], t))
-            matches_today.append(f"🏀 NBA : {CONFIG['nba_team']} vs {opp}")
+            home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
+            away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
+            matches_today.append(f"🏀 NBA : {away} @ {home}")
 
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_param}"
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
-        teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
+        competitors = event["competitions"][0]["competitors"]
+        teams = [c["team"]["displayName"] for c in competitors]
         if any(name_matches(CONFIG["nfl_team"], t) for t in teams):
-            opp = next(t for t in teams if not name_matches(CONFIG["nfl_team"], t))
-            matches_today.append(f"🏈 NFL : {CONFIG['nfl_team']} vs {opp}")
+            home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
+            away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
+            matches_today.append(f"🏈 NFL : {away} @ {home}")
 
     for league, clubs in CONFIG["football_clubs"].items():
         meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_param}"
         data = requests.get(url, timeout=15).json()
         for event in data.get("events", []):
-            teams = [c["team"]["displayName"] for c in event["competitions"][0]["competitors"]]
-            followed = next((t for t in teams if any(name_matches(club, t) for club in clubs)), None)
-            if followed:
-                opp = next(t for t in teams if t != followed)
-                matches_today.append(f"⚽ {meta['name']} {meta['flag']} {followed} vs {opp}")
+            competitors = event["competitions"][0]["competitors"]
+            teams = [c["team"]["displayName"] for c in competitors]
+            if any(name_matches(club, t) for club in clubs for t in teams):
+                home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
+                away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
+                matches_today.append(f"⚽ {meta['name']} {meta['flag']} {home} vs {away}")
 
     has_race = False
     try:
@@ -412,9 +417,120 @@ def check_birthday_announcement(state):
         state["birthday_sent_date"] = today_str
 
 
+def check_monthly_age_announcement(state):
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    if state.get("monthly_age_sent_date") == today_str:
+        return
+    if now_paris.hour < 7:
+        return
+
+    lines = []
+
+    for person in CONFIG["people"]:
+        birth_date = person.get("birth_date")
+        if not birth_date:
+            continue
+        birth_month, birth_day = (int(x) for x in birth_date.split("-"))
+
+        if now_paris.day != birth_day:
+            continue
+        if now_paris.month == birth_month:
+            continue
+
+        months_total = (now_paris.year - person["birth_year"]) * 12 + (now_paris.month - birth_month)
+        years, months = divmod(months_total, 12)
+        age_str = f"{years} ans" if months == 0 else f"{years} ans et {months} mois"
+        lines.append(f"🎈 Aujourd'hui, {person['name']} a {age_str} !")
+
+    if lines:
+        if send_message("\n".join(lines)):
+            state["monthly_age_sent_date"] = today_str
+    else:
+        state["monthly_age_sent_date"] = today_str
+
+
+def easter_date(year):
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+
+def nth_sunday_of_month(year, month, n):
+    first_day = date(year, month, 1)
+    offset = (6 - first_day.weekday()) % 7
+    first_sunday = first_day + timedelta(days=offset)
+    return first_sunday + timedelta(weeks=n - 1)
+
+
+def last_sunday_of_month(year, month):
+    next_month_first = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+    last_day = next_month_first - timedelta(days=1)
+    offset = (last_day.weekday() - 6) % 7
+    return last_day - timedelta(days=offset)
+
+
+def fete_des_meres(year):
+    candidate = last_sunday_of_month(year, 5)
+    pentecost = easter_date(year) + timedelta(days=49)
+    if candidate == pentecost:
+        return nth_sunday_of_month(year, 6, 1)
+    return candidate
+
+
+def fete_des_peres(year):
+    return nth_sunday_of_month(year, 6, 3)
+
+
+def get_special_days(year):
+    days = {
+        "01-01": f"🎉 Une toute nouvelle année démarre, {year} ! Que la santé, le bonheur et de belles réussites vous accompagnent tout au long de l'année, à vous, la famille Lebreton !",
+        "02-14": "❤️ Aujourd'hui c'est la Saint-Valentin, une pensée pour tous ceux que vous aimez !",
+        "05-01": "🤍 Bon 1er mai ! Un brin de muguet blanc et une belle journée de repos.",
+        "07-14": "🇫🇷 Joyeuse Fête Nationale ! Liberté, Égalité, Fraternité — vive la France !",
+        "10-31": "🎃👻 Joyeux Halloween ! Que la chasse aux bonbons soit fructueuse.",
+        "12-25": "🎄✨ Joyeux Noël à vous, la famille Lebreton ! Que cette journée soit pleine de magie et de moments partagés.",
+    }
+    days[fete_des_meres(year).strftime("%m-%d")] = "💐 C'est la Fête des Mères aujourd'hui, n'oubliez pas de lui montrer tout votre amour !"
+    days[fete_des_peres(year).strftime("%m-%d")] = "👔🏆 Bonne Fête des Pères, Benoit ! Arthur a bien de la chance de t'avoir."
+    return days
+
+
+def check_special_day_announcement(state):
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    if state.get("special_day_sent_date") == today_str:
+        return
+    if now_paris.hour < 7:
+        return
+
+    today_md = now_paris.strftime("%m-%d")
+    message = get_special_days(now_paris.year).get(today_md)
+
+    if message:
+        if send_message(f"<b>{message}</b>"):
+            state["special_day_sent_date"] = today_str
+    else:
+        state["special_day_sent_date"] = today_str
+
+
 def main():
     state = load_state()
-    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement):
+    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement, check_monthly_age_announcement, check_special_day_announcement):
         try:
             check(state)
         except Exception as e:

@@ -8,8 +8,8 @@ Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante grat
 Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
+  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
 """
 
 import os
@@ -23,16 +23,19 @@ STATE_FILE = "state.json"
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 
+# ----------------------------------------------------------------------
+# CONFIG — modifiable librement : ajoute/retire équipes, clubs, sports ici
+# ----------------------------------------------------------------------
 CONFIG = {
     "nba_team": "Miami Heat",
     "nfl_team": "Denver Broncos",
     "football_clubs": {
-        "esp.1": ["Barcelona"],
-        "fra.1": ["Marseille"],
-        "ger.1": ["Bayern Munich"],
-        "eng.1": ["Manchester United"],
-        "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
-        "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
+        "esp.1": ["Barcelona"],       # La Liga
+        "fra.1": ["Marseille"],       # Ligue 1
+        "ger.1": ["Bayern Munich"],   # Bundesliga
+        "eng.1": ["Manchester United"],  # Premier League
+        "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # C1
+        "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # Europa League
     },
     "national_team": "France",
     "f1_teams": ["Red Bull", "Alpine"],
@@ -43,6 +46,8 @@ CONFIG = {
     ],
 }
 
+# Nom affiché + drapeau par compétition (uniquement les championnats/C1 :
+# les matchs de coupe ne sont pas suivis, pas besoin de journée pour eux)
 FOOTBALL_LEAGUES = {
     "esp.1": {"name": "Liga", "flag": "🇪🇸"},
     "fra.1": {"name": "Ligue 1", "flag": "🇫🇷"},
@@ -52,13 +57,15 @@ FOOTBALL_LEAGUES = {
     "uefa.europa": {"name": "Europa League", "flag": "🏆"},
 }
 
+# Emoji de victoire personnalisé par club (par défaut 😁 si non précisé ici)
 CLUB_WIN_EMOJI = {
-    "Manchester United": "😈",
-    "Barcelona": "🔵🔴",
-    "Marseille": "⚪🔵",
-    "Bayern Munich": "🔴⚪",
+    "Manchester United": "😈",   # Red Devils
+    "Barcelona": "🔵🔴",         # Blaugrana
+    "Marseille": "⚪🔵",         # Blanc et bleu ciel
+    "Bayern Munich": "🔴⚪",     # Rouge et blanc
 }
 
+# Traduction des noms de Grand Prix (nom renvoyé par l'API -> nom français)
 RACE_NAME_FR = {
     "Bahrain Grand Prix": "Grand Prix de Bahreïn",
     "Saudi Arabian Grand Prix": "Grand Prix d'Arabie Saoudite",
@@ -86,6 +93,7 @@ RACE_NAME_FR = {
     "Abu Dhabi Grand Prix": "Grand Prix d'Abou Dabi",
 }
 
+# Drapeau du pays hôte, par Grand Prix (même clé que RACE_NAME_FR)
 RACE_FLAG = {
     "Bahrain Grand Prix": "🇧🇭",
     "Saudi Arabian Grand Prix": "🇸🇦",
@@ -113,6 +121,10 @@ RACE_FLAG = {
     "Abu Dhabi Grand Prix": "🇦🇪",
 }
 
+
+# ----------------------------------------------------------------------
+# Utilitaires génériques
+# ----------------------------------------------------------------------
 
 def load_state():
     if os.path.exists(STATE_FILE):
@@ -147,6 +159,18 @@ def name_matches(keyword, full_name):
     return keyword.lower() in full_name.lower()
 
 
+def clean_team_name(name):
+    """Retire les préfixes numériques de certains noms de clubs allemands
+    (ex: '1. FC Union Berlin' -> 'FC Union Berlin'), purement cosmétique."""
+    if name[:3] == "1. ":
+        return name[3:]
+    return name
+
+
+# ----------------------------------------------------------------------
+# NBA — Miami Heat : résultat + meilleurs marqueurs Miami + classement
+# ----------------------------------------------------------------------
+
 def check_nba(state):
     url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
     data = requests.get(url, timeout=15).json()
@@ -157,7 +181,7 @@ def check_nba(state):
         if not any(name_matches(CONFIG["nba_team"], t) for t in teams):
             continue
         if event["status"]["type"]["name"] != "STATUS_FINAL":
-            continue
+            continue  # on ne poste qu'au résultat final pour l'instant
         game_id = event["id"]
         if game_id in state["nba"]:
             continue
@@ -166,12 +190,14 @@ def check_nba(state):
         opp = next(c for c in competitors if not name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
         heat_score, opp_score = int(heat["score"]), int(opp["score"])
 
+        # Meilleur marqueur Miami
         leaders = heat.get("leaders", [])
         top_scorer_line = ""
         if leaders:
             pts_leader = leaders[0]["leaders"][0]
             top_scorer_line = f"\n\n🏀 Top marqueur Miami : {pts_leader['athlete']['displayName']} — {pts_leader['displayValue']}"
 
+        # Classement (record) après le match
         heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
         msg = (
@@ -183,6 +209,10 @@ def check_nba(state):
         send_message(msg)
         state["nba"].append(game_id)
 
+
+# ----------------------------------------------------------------------
+# NFL — Denver Broncos : même format que Miami Heat
+# ----------------------------------------------------------------------
 
 def check_nfl(state):
     url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
@@ -221,6 +251,10 @@ def check_nfl(state):
         state["nfl"].append(game_id)
 
 
+# ----------------------------------------------------------------------
+# Football — clubs suivis (résultat en direct/final)
+# ----------------------------------------------------------------------
+
 def check_football(state):
     for league, clubs in CONFIG["football_clubs"].items():
         meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
@@ -244,7 +278,7 @@ def check_football(state):
             title = f"⚽ {meta['name']} {meta['flag']}"
 
             scorers_lines = []
-            team_names_by_id = {c["team"]["id"]: c["team"]["displayName"] for c in competitors}
+            team_names_by_id = {c["team"]["id"]: clean_team_name(c["team"]["displayName"]) for c in competitors}
             details = event["competitions"][0].get("details", [])
             goals = [d for d in details if d.get("scoringPlay")]
             goals.sort(key=lambda d: d.get("clock", {}).get("value", 0))
@@ -262,12 +296,16 @@ def check_football(state):
 
             msg = (
                 f"<b>{title}</b>\n\n"
-                f"{home['team']['displayName']} {home['score']} - {away['score']} {away['team']['displayName']}"
+                f"{clean_team_name(home['team']['displayName'])} {home['score']} - {away['score']} {clean_team_name(away['team']['displayName'])}"
                 f"{scorers_block}"
             )
             send_message(msg)
             state["football"].append(game_id)
 
+
+# ----------------------------------------------------------------------
+# F1 — dernière course : résultat + classement pilotes/constructeurs
+# ----------------------------------------------------------------------
 
 def check_f1(state):
     base = "https://api.jolpi.ca/ergast/f1"
@@ -292,21 +330,23 @@ def check_f1(state):
     for r in podium:
         lines.append(f"{r['position']}. {r['Driver']['familyName']} ({r['Constructor']['name']})")
 
+    # Classement pilotes après la course (top 3)
     standings = requests.get(f"{base}/current/driverStandings.json", timeout=15).json()
     try:
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
         lines.append("\n📊 Classement pilotes (top 3) :")
         for d in driver_standings[:3]:
-            lines.append(f" {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
     except (KeyError, IndexError):
         pass
 
+    # Classement constructeurs après la course (top 3)
     constructor_standings_data = requests.get(f"{base}/current/constructorStandings.json", timeout=15).json()
     try:
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
         lines.append("\n📊 Classement constructeurs (top 3) :")
         for c in constructor_standings[:3]:
-            lines.append(f" {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
+            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -314,18 +354,28 @@ def check_f1(state):
     state["f1"].append(race_id)
 
 
+# ----------------------------------------------------------------------
+# Message du matin — "Aujourd'hui, jour de match !" (9h heure française,
+# uniquement s'il y a au moins un match, une seule fois par jour)
+# ----------------------------------------------------------------------
+
 def check_matchday_announcement(state):
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
     today_str = now_paris.strftime("%Y-%m-%d")
 
     if state.get("matchday_sent_date") == today_str:
-        return
+        return  # déjà traité aujourd'hui
     if now_paris.hour < 9:
-        return
+        return  # on n'agit qu'entre 9h00 et 9h59 heure française
 
     date_param = now_paris.strftime("%Y%m%d")
-    matches_today = []
+    matches_today = []  # liste de tuples (datetime_paris, texte_affiché)
 
+    def event_time_paris(event):
+        dt_utc = datetime.fromisoformat(event["date"].replace("Z", "+00:00"))
+        return dt_utc.astimezone(ZoneInfo("Europe/Paris"))
+
+    # NBA
     url = f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates={date_param}"
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
@@ -334,8 +384,10 @@ def check_matchday_announcement(state):
         if any(name_matches(CONFIG["nba_team"], t) for t in teams):
             home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
             away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
-            matches_today.append(f"🏀 NBA : {away} @ {home}")
+            when = event_time_paris(event)
+            matches_today.append((when, f"{when.strftime('%Hh%M')} — 🏀 NBA : {away} @ {home}"))
 
+    # NFL
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_param}"
     data = requests.get(url, timeout=15).json()
     for event in data.get("events", []):
@@ -344,8 +396,10 @@ def check_matchday_announcement(state):
         if any(name_matches(CONFIG["nfl_team"], t) for t in teams):
             home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
             away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
-            matches_today.append(f"🏈 NFL : {away} @ {home}")
+            when = event_time_paris(event)
+            matches_today.append((when, f"{when.strftime('%Hh%M')} — 🏈 NFL : {away} @ {home}"))
 
+    # Football
     for league, clubs in CONFIG["football_clubs"].items():
         meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_param}"
@@ -356,8 +410,10 @@ def check_matchday_announcement(state):
             if any(name_matches(club, t) for club in clubs for t in teams):
                 home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
                 away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
-                matches_today.append(f"⚽ {meta['name']} {meta['flag']} {home} vs {away}")
+                when = event_time_paris(event)
+                matches_today.append((when, f"{when.strftime('%Hh%M')} — ⚽ {meta['name']} {meta['flag']} {clean_team_name(home)} vs {clean_team_name(away)}"))
 
+    # F1 (course du jour)
     has_race = False
     try:
         base = "https://api.jolpi.ca/ergast/f1"
@@ -366,12 +422,21 @@ def check_matchday_announcement(state):
         if race["date"] == now_paris.strftime("%Y-%m-%d"):
             race_name_fr = RACE_NAME_FR.get(race["raceName"], race["raceName"])
             race_flag = RACE_FLAG.get(race["raceName"], "")
-            matches_today.append(f"🏁 F1 : {race_name_fr} {race_flag}")
+            race_time_str = race.get("time", "")
+            if race_time_str:
+                dt_utc = datetime.fromisoformat(f"{race['date']}T{race_time_str.replace('Z', '+00:00')}")
+                when = dt_utc.astimezone(ZoneInfo("Europe/Paris"))
+                time_prefix = f"{when.strftime('%Hh%M')} — "
+            else:
+                when = now_paris  # pas d'heure connue : affiché en premier par défaut
+                time_prefix = ""
+            matches_today.append((when, f"{time_prefix}🏁 F1 : {race_name_fr} {race_flag}"))
             has_race = True
     except (KeyError, IndexError):
         pass
 
     if matches_today:
+        matches_today.sort(key=lambda item: item[0])
         nb_matches = len(matches_today) - (1 if has_race else 0)
         if has_race and nb_matches == 0:
             titre = "Aujourd'hui, jour de course !"
@@ -384,12 +449,16 @@ def check_matchday_announcement(state):
         else:
             titre = "Aujourd'hui, jour de matchs !"
         lines = [f"<b>📅 {titre}</b>", ""]
-        lines.extend(matches_today)
+        lines.extend(text for _, text in matches_today)
         if send_message("\n".join(lines)):
-            state["matchday_sent_date"] = today_str
+            state["matchday_sent_date"] = today_str  # marqué seulement si l'envoi a réussi
     else:
-        state["matchday_sent_date"] = today_str
+        state["matchday_sent_date"] = today_str  # rien à envoyer, on marque quand même la journée
 
+
+# ----------------------------------------------------------------------
+# Anniversaires et fêtes — 7h heure française, une fois par jour
+# ----------------------------------------------------------------------
 
 def check_birthday_announcement(state):
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
@@ -417,6 +486,12 @@ def check_birthday_announcement(state):
         state["birthday_sent_date"] = today_str
 
 
+# ----------------------------------------------------------------------
+# Âge mensuel (ex: "Arthur a 14 ans et 8 mois") — le jour du mois
+# correspondant à la date de naissance, sauf le mois de l'anniversaire
+# (déjà couvert par check_birthday_announcement). 7h heure française.
+# ----------------------------------------------------------------------
+
 def check_monthly_age_announcement(state):
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
     today_str = now_paris.strftime("%Y-%m-%d")
@@ -437,7 +512,7 @@ def check_monthly_age_announcement(state):
         if now_paris.day != birth_day:
             continue
         if now_paris.month == birth_month:
-            continue
+            continue  # c'est le mois de l'anniversaire, déjà géré ailleurs
 
         months_total = (now_paris.year - person["birth_year"]) * 12 + (now_paris.month - birth_month)
         years, months = divmod(months_total, 12)
@@ -451,7 +526,13 @@ def check_monthly_age_announcement(state):
         state["monthly_age_sent_date"] = today_str
 
 
+# ----------------------------------------------------------------------
+# Jours spéciaux (Noël, 14 Juillet, Halloween, Nouvel An, Saint-Valentin,
+# 1er Mai, Fête des Mères/Pères) — 7h heure française, une fois par jour
+# ----------------------------------------------------------------------
+
 def easter_date(year):
+    """Calcule la date de Pâques (algorithme de Meeus/Jones/Butcher)."""
     a = year % 19
     b = year // 100
     c = year % 100
@@ -484,6 +565,8 @@ def last_sunday_of_month(year, month):
 
 
 def fete_des_meres(year):
+    """Dernier dimanche de mai, sauf si ça tombe le jour de la Pentecôte
+    (Pâques + 49 jours), auquel cas c'est reporté au 1er dimanche de juin."""
     candidate = last_sunday_of_month(year, 5)
     pentecost = easter_date(year) + timedelta(days=49)
     if candidate == pentecost:
@@ -492,10 +575,11 @@ def fete_des_meres(year):
 
 
 def fete_des_peres(year):
-    return nth_sunday_of_month(year, 6, 3)
+    return nth_sunday_of_month(year, 6, 3)  # 3e dimanche de juin
 
 
 def get_special_days(year):
+    """Retourne un dict {'MM-DD': message} pour l'année donnée."""
     days = {
         "01-01": f"🎉 Une toute nouvelle année démarre, {year} ! Que la santé, le bonheur et de belles réussites vous accompagnent tout au long de l'année, à vous, la famille Lebreton !",
         "02-14": "❤️ Aujourd'hui c'est la Saint-Valentin, une pensée pour tous ceux que vous aimez !",
@@ -527,6 +611,10 @@ def check_special_day_announcement(state):
     else:
         state["special_day_sent_date"] = today_str
 
+
+# ----------------------------------------------------------------------
+# Main
+# ----------------------------------------------------------------------
 
 def main():
     state = load_state()

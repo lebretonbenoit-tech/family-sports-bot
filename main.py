@@ -25,7 +25,10 @@ STATE_FILE = "state.json"
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
 BOT_VERSION = "2.2"
-CHANGELOG = "Ajout du suivi de l'équipe de France (Ligue des Nations + matchs amicaux) et alerte Top 100 Beatport pour Sonico BCN."
+CHANGELOG = [
+    "Ajout du suivi de l'équipe de France (Ligue des Nations + matchs amicaux)",
+    "Ajout de l'alerte Top 100 Beatport pour Sonico BCN",
+]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -708,7 +711,8 @@ def check_version_announcement(state):
     if state.get("last_announced_version") == BOT_VERSION:
         return
 
-    msg = f"<b>🆕 Mise à jour du bot — version {BOT_VERSION}</b>\n\n{CHANGELOG}"
+    changelog_lines = "\n\n".join(CHANGELOG)
+    msg = f"<b>🤖 Mise à jour du bot — version {BOT_VERSION}</b>\n\n{changelog_lines}"
     if send_message(msg):
         state["last_announced_version"] = BOT_VERSION
 

@@ -14,11 +14,18 @@ Variables d'environnement nécessaires :
 
 import os
 import json
+import re
 import requests
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
 STATE_FILE = "state.json"
+
+# À modifier à chaque mise à jour du bot : le bot enverra automatiquement
+# ce message une seule fois, dès qu'il détecte un numéro de version différent
+# de celui déjà annoncé.
+BOT_VERSION = "2.2"
+CHANGELOG = "Ajout du suivi de l'équipe de France (Ligue des Nations + matchs amicaux) et alerte Top 100 Beatport pour Sonico BCN."
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
@@ -36,13 +43,28 @@ CONFIG = {
         "eng.1": ["Manchester United"],  # Premier League
         "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # C1
         "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # Europa League
+        "uefa.nations": ["France"],  # Ligue des Nations, équipe nationale
+        "fifa.friendly": ["France"],  # Matchs amicaux, équipe nationale
     },
-    "national_team": "France",
     "f1_teams": ["Red Bull", "Alpine"],
     "f1_drivers": ["Leclerc", "Hamilton", "Verstappen"],
     "people": [
         {"name": "Arthur", "birth_date": "11-06", "birth_year": 2011, "nameday": "11-15"},
         {"name": "Benoit", "birth_date": "06-10", "birth_year": 1983, "nameday": "07-11"},
+    ],
+    "beatport_labels": {
+        "Sonico BCN": {"id": 122893, "slug": "sonico-bcn"},
+    },
+    "beatport_label_emoji": {
+        "Sonico BCN": "⚡",
+        "Deep Over Records": "🌴",
+    },
+    "beatport_genres": [
+        {"slug": "techno-peak-time-driving", "id": 6, "name": "Techno (Peak Time / Driving)"},
+        {"slug": "techno-raw-deep-hypnotic", "id": 92, "name": "Techno (Raw / Deep / Hypnotic)"},
+        {"slug": "tech-house", "id": 11, "name": "Tech House"},
+        {"slug": "melodic-house-techno", "id": 90, "name": "Melodic House & Techno"},
+        {"slug": "minimal-deep-tech", "id": 14, "name": "Minimal / Deep Tech"},
     ],
 }
 
@@ -55,6 +77,8 @@ FOOTBALL_LEAGUES = {
     "eng.1": {"name": "Premier League", "flag": "🇬🇧"},
     "uefa.champions": {"name": "Champions League", "flag": "🌟"},
     "uefa.europa": {"name": "Europa League", "flag": "🏆"},
+    "uefa.nations": {"name": "Ligue des Nations", "flag": "🇫🇷"},
+    "fifa.friendly": {"name": "Match amical", "flag": "🇫🇷"},
 }
 
 # Emoji de victoire personnalisé par club (par défaut 😁 si non précisé ici)
@@ -130,7 +154,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "", "special_day_sent_date": ""}
+    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "", "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {}, "last_announced_version": ""}
 
 
 def save_state(state):
@@ -613,12 +637,89 @@ def check_special_day_announcement(state):
 
 
 # ----------------------------------------------------------------------
+# Beatport — alerte quand un des labels entre dans un Top 100 suivi
+# (une vérification par jour, à partir de 10h heure française)
+# ----------------------------------------------------------------------
+
+def find_chart_position(page_html, label_marker):
+    """Cherche le numéro de position (1-100) le plus proche avant le lien du
+    label dans la page. Best-effort : dépend de la structure HTML de
+    Beatport, peut ne rien trouver si la page change de forme."""
+    idx = page_html.find(label_marker)
+    if idx == -1:
+        return None
+    snippet = page_html[max(0, idx - 1000):idx]
+    matches = re.findall(r">(\d{1,3})<", snippet)
+    for m in reversed(matches):
+        n = int(m)
+        if 1 <= n <= 100:
+            return n
+    return None
+
+
+def check_beatport_charts(state):
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    if state.get("beatport_sent_date") == today_str:
+        return
+    if now_paris.hour < 10:
+        return
+
+    if "beatport_status" not in state:
+        state["beatport_status"] = {}
+
+    chart_types = [("top-100", "Top 100 Tracks"), ("top-100-releases", "Top 100 Releases")]
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; family-sports-bot/1.0)"}
+    messages = []
+
+    for genre in CONFIG["beatport_genres"]:
+        for chart_slug, chart_label in chart_types:
+            url = f"https://www.beatport.com/genre/{genre['slug']}/{genre['id']}/{chart_slug}"
+            try:
+                page = requests.get(url, timeout=15, headers=headers).text
+            except Exception:
+                continue
+
+            for label_name, label_info in CONFIG["beatport_labels"].items():
+                key = f"{label_name}|{genre['slug']}|{chart_slug}"
+                marker = f"/label/{label_info['slug']}/{label_info['id']}"
+                is_in = marker in page
+                was_in = state["beatport_status"].get(key, False)
+                if is_in and not was_in:
+                    emoji = CONFIG["beatport_label_emoji"].get(label_name, "🎵")
+                    position = find_chart_position(page, marker)
+                    place = f" à la {position}e place" if position else ""
+                    messages.append(f"{emoji} {label_name} est entré{place} dans le {chart_label} de {genre['name']} !")
+                state["beatport_status"][key] = is_in
+
+    state["beatport_sent_date"] = today_str
+
+    if messages:
+        send_message("<b>🎧 Beatport</b>\n\n" + "\n".join(messages))
+
+
+# ----------------------------------------------------------------------
+# Annonce de mise à jour du bot — envoyée une seule fois par version,
+# dès la prochaine exécution après un changement de BOT_VERSION
+# ----------------------------------------------------------------------
+
+def check_version_announcement(state):
+    if state.get("last_announced_version") == BOT_VERSION:
+        return
+
+    msg = f"<b>🆕 Mise à jour du bot — version {BOT_VERSION}</b>\n\n{CHANGELOG}"
+    if send_message(msg):
+        state["last_announced_version"] = BOT_VERSION
+
+
+# ----------------------------------------------------------------------
 # Main
 # ----------------------------------------------------------------------
 
 def main():
     state = load_state()
-    for check in (check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement, check_monthly_age_announcement, check_special_day_announcement):
+    for check in (check_version_announcement, check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement, check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts):
         try:
             check(state)
         except Exception as e:

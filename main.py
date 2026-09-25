@@ -1,15 +1,10 @@
 """
-Bot Telegram multi-sports — canal privé "toi + ton fils"
-Sports couverts : NBA (Miami Heat), NFL (Denver Broncos),
-Football (FC Barcelone, OM, Bayern, Man United, Équipe de France),
-F1 (Red Bull, Alpine, Leclerc, Hamilton, Verstappen)
-
-Architecture 0€ : ESPN API (NBA/NFL/Foot) + Jolpica API (F1, remplaçante gratuite d'Ergast)
-Pensé pour tourner toutes les 10-15 min via GitHub Actions (cron), comme DUNKR LIVE.
+Bot Telegram multi-sports pour un canal privé.
+Sports suivis : NBA, NFL, Football (clubs + équipe de France), F1.
+Architecture gratuite, pensé pour tourner via GitHub Actions.
 
 Variables d'environnement nécessaires :
-  TELEGRAM_BOT_TOKEN   -> token du bot (via @BotFather)
-  TELEGRAM_CHAT_ID     -> id du canal privé (ex: -1001234567890)
+  TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 """
 
 import os
@@ -24,10 +19,9 @@ STATE_FILE = "state.json"
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.2"
+BOT_VERSION = "2.21"
 CHANGELOG = [
-    "Ajout du suivi de l'équipe de France (Ligue des Nations + matchs amicaux)",
-    "Ajout de l'alerte Top 100 Beatport pour Sonico BCN",
+    "Les prochaines mises à jour du bot seront désormais annoncées ici automatiquement",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -40,14 +34,14 @@ CONFIG = {
     "nba_team": "Miami Heat",
     "nfl_team": "Denver Broncos",
     "football_clubs": {
-        "esp.1": ["Barcelona"],       # La Liga
-        "fra.1": ["Marseille"],       # Ligue 1
-        "ger.1": ["Bayern Munich"],   # Bundesliga
-        "eng.1": ["Manchester United"],  # Premier League
-        "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # C1
-        "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],  # Europa League
-        "uefa.nations": ["France"],  # Ligue des Nations, équipe nationale
-        "fifa.friendly": ["France"],  # Matchs amicaux, équipe nationale
+        "esp.1": ["Barcelona"],
+        "fra.1": ["Marseille"],
+        "ger.1": ["Bayern Munich"],
+        "eng.1": ["Manchester United"],
+        "uefa.champions": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
+        "uefa.europa": ["Barcelona", "Bayern Munich", "Manchester United", "Marseille"],
+        "uefa.nations": ["France"],
+        "fifa.friendly": ["France"],
     },
     "f1_teams": ["Red Bull", "Alpine"],
     "f1_drivers": ["Leclerc", "Hamilton", "Verstappen"],

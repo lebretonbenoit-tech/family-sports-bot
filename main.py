@@ -19,9 +19,12 @@ STATE_FILE = "state.json"
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.21"
+BOT_VERSION = "2.3"
 CHANGELOG = [
-    "Les prochaines mises à jour du bot seront désormais annoncées ici automatiquement",
+    "Ajout d'un message pour le top 5 des qualifications F1, dès qu'elles sont terminées",
+    "Les Grand Prix sont maintenant nommés par ville/circuit plutôt que par pays (ex: Grand Prix de Bakou)",
+    "Le drapeau de l'équipe de France suit désormais 'France' plutôt que la compétition",
+    "Séparateurs uniformisés (•) et allégés dans les messages",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -88,29 +91,29 @@ CLUB_WIN_EMOJI = {
 
 # Traduction des noms de Grand Prix (nom renvoyé par l'API -> nom français)
 RACE_NAME_FR = {
-    "Bahrain Grand Prix": "Grand Prix de Bahreïn",
-    "Saudi Arabian Grand Prix": "Grand Prix d'Arabie Saoudite",
-    "Australian Grand Prix": "Grand Prix d'Australie",
-    "Chinese Grand Prix": "Grand Prix de Chine",
-    "Japanese Grand Prix": "Grand Prix du Japon",
+    "Bahrain Grand Prix": "Grand Prix de Sakhir",
+    "Saudi Arabian Grand Prix": "Grand Prix de Djeddah",
+    "Australian Grand Prix": "Grand Prix de Melbourne",
+    "Chinese Grand Prix": "Grand Prix de Shanghai",
+    "Japanese Grand Prix": "Grand Prix de Suzuka",
     "Miami Grand Prix": "Grand Prix de Miami",
-    "Canadian Grand Prix": "Grand Prix du Canada",
+    "Canadian Grand Prix": "Grand Prix de Montréal",
     "Monaco Grand Prix": "Grand Prix de Monaco",
-    "Spanish Grand Prix": "Grand Prix d'Espagne",
-    "Austrian Grand Prix": "Grand Prix d'Autriche",
-    "British Grand Prix": "Grand Prix de Grande-Bretagne",
-    "Belgian Grand Prix": "Grand Prix de Belgique",
-    "Hungarian Grand Prix": "Grand Prix de Hongrie",
-    "Dutch Grand Prix": "Grand Prix des Pays-Bas",
-    "Italian Grand Prix": "Grand Prix d'Italie",
+    "Spanish Grand Prix": "Grand Prix de Barcelone",
+    "Austrian Grand Prix": "Grand Prix de Spielberg",
+    "British Grand Prix": "Grand Prix de Silverstone",
+    "Belgian Grand Prix": "Grand Prix de Spa",
+    "Hungarian Grand Prix": "Grand Prix de Budapest",
+    "Dutch Grand Prix": "Grand Prix de Zandvoort",
+    "Italian Grand Prix": "Grand Prix de Monza",
     "Madrid Grand Prix": "Grand Prix de Madrid",
-    "Azerbaijan Grand Prix": "Grand Prix d'Azerbaïdjan",
+    "Azerbaijan Grand Prix": "Grand Prix de Bakou",
     "Singapore Grand Prix": "Grand Prix de Singapour",
-    "United States Grand Prix": "Grand Prix des États-Unis",
+    "United States Grand Prix": "Grand Prix d'Austin",
     "Mexico City Grand Prix": "Grand Prix de Mexico",
     "São Paulo Grand Prix": "Grand Prix de São Paulo",
     "Las Vegas Grand Prix": "Grand Prix de Las Vegas",
-    "Qatar Grand Prix": "Grand Prix du Qatar",
+    "Qatar Grand Prix": "Grand Prix de Lusail",
     "Abu Dhabi Grand Prix": "Grand Prix d'Abou Dabi",
 }
 
@@ -151,7 +154,7 @@ def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
             return json.load(f)
-    return {"nba": [], "nfl": [], "football": [], "f1": [], "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "", "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {}, "last_announced_version": ""}
+    return {"nba": [], "nfl": [], "football": [], "f1": [], "f1_qualifying": [], "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "", "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {}, "last_announced_version": ""}
 
 
 def save_state(state):
@@ -185,6 +188,18 @@ def clean_team_name(name):
     (ex: '1. FC Union Berlin' -> 'FC Union Berlin'), purement cosmétique."""
     if name[:3] == "1. ":
         return name[3:]
+    return name
+
+
+NATIONAL_TEAM_LEAGUES = {"uefa.nations", "fifa.friendly"}
+
+
+def team_display(name, league):
+    """Pour les compétitions de l'équipe de France, ajoute le drapeau
+    directement à côté de 'France' (domicile ou extérieur)."""
+    name = clean_team_name(name)
+    if league in NATIONAL_TEAM_LEAGUES and name_matches("France", name):
+        return f"{name} 🇫🇷"
     return name
 
 
@@ -296,7 +311,10 @@ def check_football(state):
             home = next(c for c in competitors if c["homeAway"] == "home")
             away = next(c for c in competitors if c["homeAway"] == "away")
 
-            title = f"⚽ {meta['name']} {meta['flag']}"
+            if league in NATIONAL_TEAM_LEAGUES:
+                title = f"⚽ {meta['name']}"
+            else:
+                title = f"⚽ {meta['name']} {meta['flag']}"
 
             scorers_lines = []
             team_names_by_id = {c["team"]["id"]: clean_team_name(c["team"]["displayName"]) for c in competitors}
@@ -317,7 +335,7 @@ def check_football(state):
 
             msg = (
                 f"<b>{title}</b>\n\n"
-                f"{clean_team_name(home['team']['displayName'])} {home['score']} - {away['score']} {clean_team_name(away['team']['displayName'])}"
+                f"{team_display(home['team']['displayName'], league)} {home['score']} - {away['score']} {team_display(away['team']['displayName'], league)}"
                 f"{scorers_block}"
             )
             send_message(msg)
@@ -375,6 +393,35 @@ def check_f1(state):
     state["f1"].append(race_id)
 
 
+def check_f1_qualifying(state):
+    base = "https://api.jolpi.ca/ergast/f1"
+    data = requests.get(f"{base}/current/last/qualifying.json", timeout=15).json()
+
+    try:
+        race = data["MRData"]["RaceTable"]["Races"][0]
+    except (KeyError, IndexError):
+        return
+
+    quali_id = f"{race['season']}_{race['round']}_quali"
+    if quali_id in state["f1_qualifying"]:
+        return
+
+    results = race.get("QualifyingResults", [])
+    if not results:
+        return
+
+    top5 = sorted(results, key=lambda r: int(r["position"]))[:5]
+    race_name_fr = RACE_NAME_FR.get(race["raceName"], race["raceName"])
+    race_flag = RACE_FLAG.get(race["raceName"], "")
+
+    lines = [f"<b>🏁 Qualifications • {race_name_fr} {race_flag} ({race['season']})</b>", "", "🏆 Top 5 :"]
+    for r in top5:
+        lines.append(f"{r['position']}. {r['Driver']['familyName']} ({r['Constructor']['name']})")
+
+    send_message("\n".join(lines))
+    state["f1_qualifying"].append(quali_id)
+
+
 # ----------------------------------------------------------------------
 # Message du matin — "Aujourd'hui, jour de match !" (9h heure française,
 # uniquement s'il y a au moins un match, une seule fois par jour)
@@ -406,7 +453,7 @@ def check_matchday_announcement(state):
             home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
             away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
             when = event_time_paris(event)
-            matches_today.append((when, f"{when.strftime('%Hh%M')} — 🏀 NBA : {away} @ {home}"))
+            matches_today.append((when, f"{when.strftime('%Hh%M')} 🏀 NBA • {away} @ {home}"))
 
     # NFL
     url = f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?dates={date_param}"
@@ -418,7 +465,7 @@ def check_matchday_announcement(state):
             home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
             away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
             when = event_time_paris(event)
-            matches_today.append((when, f"{when.strftime('%Hh%M')} — 🏈 NFL : {away} @ {home}"))
+            matches_today.append((when, f"{when.strftime('%Hh%M')} 🏈 NFL • {away} @ {home}"))
 
     # Football
     for league, clubs in CONFIG["football_clubs"].items():
@@ -432,7 +479,11 @@ def check_matchday_announcement(state):
                 home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
                 away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
                 when = event_time_paris(event)
-                matches_today.append((when, f"{when.strftime('%Hh%M')} — ⚽ {meta['name']} {meta['flag']} {clean_team_name(home)} vs {clean_team_name(away)}"))
+                if league in NATIONAL_TEAM_LEAGUES:
+                    line = f"{when.strftime('%Hh%M')} ⚽ {meta['name']} • {team_display(home, league)} vs {team_display(away, league)}"
+                else:
+                    line = f"{when.strftime('%Hh%M')} ⚽ {meta['name']} • {clean_team_name(home)} vs {clean_team_name(away)}"
+                matches_today.append((when, line))
 
     # F1 (course du jour)
     has_race = False
@@ -447,11 +498,11 @@ def check_matchday_announcement(state):
             if race_time_str:
                 dt_utc = datetime.fromisoformat(f"{race['date']}T{race_time_str.replace('Z', '+00:00')}")
                 when = dt_utc.astimezone(ZoneInfo("Europe/Paris"))
-                time_prefix = f"{when.strftime('%Hh%M')} — "
+                time_prefix = f"{when.strftime('%Hh%M')} "
             else:
                 when = now_paris  # pas d'heure connue : affiché en premier par défaut
                 time_prefix = ""
-            matches_today.append((when, f"{time_prefix}🏁 F1 : {race_name_fr} {race_flag}"))
+            matches_today.append((when, f"{time_prefix}🏁 F1 • {race_name_fr} {race_flag}"))
             has_race = True
     except (KeyError, IndexError):
         pass
@@ -706,7 +757,7 @@ def check_version_announcement(state):
         return
 
     changelog_lines = "\n\n".join(CHANGELOG)
-    msg = f"<b>🤖 Mise à jour du bot — version {BOT_VERSION}</b>\n\n{changelog_lines}"
+    msg = f"<b>Mise à jour du bot 🤖 version {BOT_VERSION}</b>\n\n{changelog_lines}"
     if send_message(msg):
         state["last_announced_version"] = BOT_VERSION
 
@@ -717,7 +768,7 @@ def check_version_announcement(state):
 
 def main():
     state = load_state()
-    for check in (check_version_announcement, check_nba, check_nfl, check_football, check_f1, check_matchday_announcement, check_birthday_announcement, check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts):
+    for check in (check_version_announcement, check_nba, check_nfl, check_football, check_f1, check_f1_qualifying, check_matchday_announcement, check_birthday_announcement, check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts):
         try:
             check(state)
         except Exception as e:

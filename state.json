@@ -26,10 +26,10 @@
     "2026_15",
     "2026_16"
   ],
-  "matchday_sent_date": "2026-10-07",
-  "birthday_sent_date": "2026-10-07",
-  "monthly_age_sent_date": "2026-10-07",
-  "special_day_sent_date": "2026-10-07",
+  "matchday_sent_date": "2026-10-08",
+  "birthday_sent_date": "2026-10-08",
+  "monthly_age_sent_date": "2026-10-08",
+  "special_day_sent_date": "2026-10-08",
   "last_announced_version": "2.3",
   "beatport_status": {
     "Sonico BCN|techno-peak-time-driving|top-100": false,
@@ -43,5 +43,5 @@
     "Sonico BCN|minimal-deep-tech|top-100": false,
     "Sonico BCN|minimal-deep-tech|top-100-releases": false
   },
-  "beatport_sent_date": "2026-10-07"
+  "beatport_sent_date": "2026-10-08"
 }

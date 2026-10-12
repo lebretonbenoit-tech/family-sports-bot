@@ -24,12 +24,11 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.3"
+BOT_VERSION = "2.5"
 CHANGELOG = [
-    "Ajout d'un message pour le top 5 des qualifications F1, dès qu'elles sont terminées",
-    "Les Grand Prix sont maintenant nommés par ville/circuit plutôt que par pays (ex: Grand Prix de Bakou)",
-    "Le drapeau de l'équipe de France suit désormais 'France' plutôt que la compétition",
-    "Séparateurs uniformisés (•) et allégés dans les messages",
+    "Ajout du classement Hype 100 Beatport, en plus des Top 100 Tracks et Releases",
+    "Message NBA épuré (plus de points en toutes lettres)",
+    "Classements F1 pilotes/constructeurs étendus au Top 5 (au lieu du Top 3)",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -60,6 +59,10 @@ CONFIG = {
     "beatport_label_emoji": {
         "Sonico BCN": "⚡",
         "Deep Over Records": "🌴",
+    },
+    "weather_departments": {
+        "30": "Gard",
+        "13": "Bouches-du-Rhône",
     },
     "beatport_genres": [
         {"slug": "techno-peak-time-driving", "id": 6, "name": "Techno (Peak Time / Driving)"},
@@ -151,7 +154,7 @@ def load_state():
         "nba": [], "nfl": [], "football": [], "f1": [], "f1_qualifying": [],
         "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "",
         "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {},
-        "last_announced_version": "",
+        "last_announced_version": "", "weather_alert_status": {},
     }
 
 
@@ -228,7 +231,7 @@ def check_nba(state):
         top_scorer_line = ""
         if leaders:
             pts_leader = leaders[0]["leaders"][0]
-            top_scorer_line = f"\n\n🏀 Top marqueur Miami : {pts_leader['athlete']['displayName']} — {pts_leader['displayValue']}"
+            top_scorer_line = f"\n\nTop marqueur Miami : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
 
         heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
@@ -368,8 +371,8 @@ def check_f1(state):
     standings = requests.get(f"{base}/current/driverStandings.json", timeout=HTTP_TIMEOUT).json()
     try:
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
-        lines.append("\n📊 Classement pilotes (top 3) :")
-        for d in driver_standings[:3]:
+        lines.append("\n📊 Classement pilotes (Top 5) :")
+        for d in driver_standings[:5]:
             lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
     except (KeyError, IndexError):
         pass
@@ -377,8 +380,8 @@ def check_f1(state):
     constructor_standings_data = requests.get(f"{base}/current/constructorStandings.json", timeout=HTTP_TIMEOUT).json()
     try:
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
-        lines.append("\n📊 Classement constructeurs (top 3) :")
-        for c in constructor_standings[:3]:
+        lines.append("\n📊 Classement constructeurs (Top 5) :")
+        for c in constructor_standings[:5]:
             lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
     except (KeyError, IndexError):
         pass
@@ -664,6 +667,44 @@ def check_special_day_announcement(state):
 
 
 # ----------------------------------------------------------------------
+# Météo — alerte vigilance rouge (Gard, Bouches-du-Rhône)
+# Vérifié à chaque passage du bot (pas une fois par jour), car une alerte
+# rouge doit prévenir vite. Source officielle Météo-France, sans clé.
+# ----------------------------------------------------------------------
+
+def check_weather_alerts(state):
+    url = "https://public-api.meteofrance.fr/public/DPVigilance/v1/cartevigilance/encours"
+    try:
+        data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+    except Exception:
+        return
+
+    try:
+        period = data["product"]["periods"][0]
+        domain_ids = period["timelaps"]["domain_ids"]
+    except (KeyError, IndexError):
+        return
+
+    if "weather_alert_status" not in state:
+        state["weather_alert_status"] = {}
+
+    for dep_code, dep_name in CONFIG["weather_departments"].items():
+        entry = next((d for d in domain_ids if d.get("domain_id") == dep_code), None)
+        if not entry:
+            continue
+
+        is_red = entry.get("max_color_id") == 4
+        was_red = state["weather_alert_status"].get(dep_code, False)
+
+        if is_red and not was_red:
+            send_message(f"🔴 Alerte météo ROUGE dans le {dep_name} ! Soyez vigilants.")
+        elif was_red and not is_red:
+            send_message(f"✅ L'alerte météo rouge dans le {dep_name} a été levée.")
+
+        state["weather_alert_status"][dep_code] = is_red
+
+
+# ----------------------------------------------------------------------
 # Beatport — alerte quand un des labels entre dans un Top 100 suivi
 # (une vérification par jour, à partir de 10h heure française)
 # ----------------------------------------------------------------------
@@ -696,7 +737,7 @@ def check_beatport_charts(state):
     if "beatport_status" not in state:
         state["beatport_status"] = {}
 
-    chart_types = [("top-100", "Top 100 Tracks"), ("top-100-releases", "Top 100 Releases")]
+    chart_types = [("top-100", "Top 100 Tracks"), ("top-100-releases", "Top 100 Releases"), ("hype-100", "Hype 100")]
     headers = {"User-Agent": "Mozilla/5.0 (compatible; family-sports-bot/1.0)"}
     messages = []
 
@@ -748,7 +789,7 @@ def main():
     state = load_state()
     for check in (
         check_version_announcement, check_nba, check_nfl, check_football, check_f1,
-        check_f1_qualifying, check_matchday_announcement, check_birthday_announcement,
+        check_f1_qualifying, check_weather_alerts, check_matchday_announcement, check_birthday_announcement,
         check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts,
     ):
         try:

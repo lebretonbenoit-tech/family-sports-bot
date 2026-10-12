@@ -7,7 +7,8 @@
   "nfl": [
     "401872940",
     "401872962",
-    "401872975"
+    "401872975",
+    "401872989"
   ],
   "football": [
     "401915443",
@@ -37,7 +38,7 @@
   "birthday_sent_date": "2026-10-11",
   "monthly_age_sent_date": "2026-10-11",
   "special_day_sent_date": "2026-10-11",
-  "last_announced_version": "2.3",
+  "last_announced_version": "2.5",
   "beatport_status": {
     "Sonico BCN|techno-peak-time-driving|top-100": false,
     "Sonico BCN|techno-peak-time-driving|top-100-releases": false,

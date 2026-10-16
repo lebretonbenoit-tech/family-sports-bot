@@ -24,11 +24,10 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.5"
+BOT_VERSION = "2.6"
 CHANGELOG = [
-    "Ajout du classement Hype 100 Beatport, en plus des Top 100 Tracks et Releases",
-    "Message NBA épuré (plus de points en toutes lettres)",
-    "Classements F1 pilotes/constructeurs étendus au Top 5 (au lieu du Top 3)",
+    "Ajout du suivi NHL : Colorado Avalanche, Vegas Golden Knights, Montreal Canadiens",
+    "Saut de ligne entre chaque rendez-vous dans l'annonce du matin",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -37,6 +36,7 @@ CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
 CONFIG = {
     "nba_team": "Miami Heat",
     "nfl_team": "Denver Broncos",
+    "nhl_teams": ["Colorado Avalanche", "Vegas Golden Knights", "Montreal Canadiens"],
     "football_clubs": {
         "esp.1": ["Barcelona"],
         "fra.1": ["Marseille"],
@@ -151,7 +151,7 @@ def load_state():
         with open(STATE_FILE, "r") as f:
             return json.load(f)
     return {
-        "nba": [], "nfl": [], "football": [], "f1": [], "f1_qualifying": [],
+        "nba": [], "nfl": [], "nhl": [], "football": [], "f1": [], "f1_qualifying": [],
         "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "",
         "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {},
         "last_announced_version": "", "weather_alert_status": {},
@@ -284,6 +284,48 @@ def check_nfl(state):
         )
         send_message(msg)
         state["nfl"].append(game_id)
+
+
+# ----------------------------------------------------------------------
+# NHL — Colorado Avalanche, Vegas Golden Knights
+# ----------------------------------------------------------------------
+
+def check_nhl(state):
+    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
+    data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+
+    for event in data.get("events", []):
+        competitors = event["competitions"][0]["competitors"]
+        team_names = [c["team"]["displayName"] for c in competitors]
+        followed = next((t for t in CONFIG["nhl_teams"] if any(name_matches(t, n) for n in team_names)), None)
+        if not followed:
+            continue
+        if event["status"]["type"]["name"] != "STATUS_FINAL":
+            continue
+        game_id = event["id"]
+        if game_id in state["nhl"]:
+            continue
+
+        team_comp = next(c for c in competitors if name_matches(followed, c["team"]["displayName"]))
+        opp_comp = next(c for c in competitors if not name_matches(followed, c["team"]["displayName"]))
+        team_score, opp_score = int(team_comp["score"]), int(opp_comp["score"])
+
+        leaders = team_comp.get("leaders", [])
+        top_line = ""
+        if leaders:
+            leader = leaders[0]["leaders"][0]
+            top_line = f"\n\nMeilleur pointeur {followed} : {leader['athlete']['displayName']} {leader['displayValue']} points"
+
+        team_record = team_comp.get("records", [{}])[0].get("summary", "N/A")
+
+        msg = (
+            f"<b>🏒 NHL</b>\n\n"
+            f"{team_comp['team']['displayName']} {team_score} - {opp_score} {opp_comp['team']['displayName']}"
+            f"{top_line}"
+            f"\n\n📊 Bilan {followed} : {team_record}"
+        )
+        send_message(msg)
+        state["nhl"].append(game_id)
 
 
 # ----------------------------------------------------------------------
@@ -462,6 +504,17 @@ def check_matchday_announcement(state):
             when = event_time_paris(event)
             matches_today.append((when, f"{when.strftime('%Hh%M')} 🏈 NFL • {away} @ {home}"))
 
+    url = f"https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard?dates={date_param}"
+    data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+    for event in data.get("events", []):
+        competitors = event["competitions"][0]["competitors"]
+        team_names = [c["team"]["displayName"] for c in competitors]
+        if any(name_matches(t, n) for t in CONFIG["nhl_teams"] for n in team_names):
+            home = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "home")
+            away = next(c["team"]["displayName"] for c in competitors if c["homeAway"] == "away")
+            when = event_time_paris(event)
+            matches_today.append((when, f"{when.strftime('%Hh%M')} 🏒 NHL • {away} @ {home}"))
+
     for league, clubs in CONFIG["football_clubs"].items():
         meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard?dates={date_param}"
@@ -514,7 +567,9 @@ def check_matchday_announcement(state):
         else:
             titre = "Aujourd'hui, jour de matchs !"
         lines = [f"<b>📅 {titre}</b>", ""]
-        lines.extend(text for _, text in matches_today)
+        for text in (t for _, t in matches_today):
+            lines.append(text)
+            lines.append("")
         if send_message("\n".join(lines)):
             state["matchday_sent_date"] = today_str
     else:
@@ -788,7 +843,7 @@ def check_version_announcement(state):
 def main():
     state = load_state()
     for check in (
-        check_version_announcement, check_nba, check_nfl, check_football, check_f1,
+        check_version_announcement, check_nba, check_nfl, check_nhl, check_football, check_f1,
         check_f1_qualifying, check_weather_alerts, check_matchday_announcement, check_birthday_announcement,
         check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts,
     ):

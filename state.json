@@ -71,7 +71,7 @@
   "birthday_sent_date": "2026-11-02",
   "monthly_age_sent_date": "2026-11-02",
   "special_day_sent_date": "2026-11-02",
-  "last_announced_version": "2.6",
+  "last_announced_version": "2.7",
   "beatport_status": {
     "Sonico BCN|techno-peak-time-driving|top-100": false,
     "Sonico BCN|techno-peak-time-driving|top-100-releases": false,
@@ -89,5 +89,11 @@
     "Sonico BCN|melodic-house-techno|hype-100": false,
     "Sonico BCN|minimal-deep-tech|hype-100": false
   },
-  "beatport_sent_date": "2026-11-02"
+  "beatport_sent_date": "2026-11-02",
+  "nhl": [],
+  "f1_qualifying": [
+    "2026_19_quali"
+  ],
+  "results_digest_date": "2026-11-02",
+  "weather_alert_status": {}
 }

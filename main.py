@@ -8,6 +8,7 @@ Variables d'environnement nécessaires :
 """
 
 import os
+import copy
 import json
 import re
 import requests
@@ -24,10 +25,10 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.6"
+BOT_VERSION = "2.7"
 CHANGELOG = [
-    "Ajout du suivi NHL : Colorado Avalanche, Vegas Golden Knights, Montreal Canadiens",
-    "Saut de ligne entre chaque rendez-vous dans l'annonce du matin",
+    "Les résultats (NBA, NFL, NHL, foot, F1) sont maintenant envoyés une fois par jour, à partir de 8h",
+    "Correctif de fiabilité : les résultats NHL et les qualifications F1 pouvaient ne jamais partir",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -146,16 +147,24 @@ RACE_FLAG = {
 }
 
 
+DEFAULT_STATE = {
+    "nba": [], "nfl": [], "nhl": [], "football": [], "f1": [], "f1_qualifying": [],
+    "results_digest_date": "", "matchday_sent_date": "", "birthday_sent_date": "",
+    "monthly_age_sent_date": "", "special_day_sent_date": "", "beatport_sent_date": "",
+    "beatport_status": {}, "last_announced_version": "", "weather_alert_status": {},
+}
+
+
 def load_state():
+    """Charge l'état et complète les clés manquantes : un state.json ancien
+    ne contient pas les clés des fonctions ajoutées depuis (ex: nhl)."""
+    state = {}
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r") as f:
-            return json.load(f)
-    return {
-        "nba": [], "nfl": [], "nhl": [], "football": [], "f1": [], "f1_qualifying": [],
-        "matchday_sent_date": "", "birthday_sent_date": "", "monthly_age_sent_date": "",
-        "special_day_sent_date": "", "beatport_sent_date": "", "beatport_status": {},
-        "last_announced_version": "", "weather_alert_status": {},
-    }
+            state = json.load(f)
+    for key, value in DEFAULT_STATE.items():
+        state.setdefault(key, copy.deepcopy(value))
+    return state
 
 
 def save_state(state):
@@ -163,16 +172,21 @@ def save_state(state):
         json.dump(state, f, indent=2)
 
 
+SEND_FAILURES = []  # une entrée par échec d'envoi Telegram pendant l'exécution
+
+
 def send_message(text):
     if not BOT_TOKEN or not CHAT_ID:
         print("[!] TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID manquant — message non envoyé :")
         print(text)
+        SEND_FAILURES.append(text[:40])
         return False
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
     r = requests.post(url, json=payload, timeout=HTTP_TIMEOUT)
     if not r.ok:
         print(f"[!] Erreur envoi Telegram : {r.status_code} {r.text}")
+        SEND_FAILURES.append(text[:40])
         return False
     return True
 
@@ -205,44 +219,62 @@ def team_display(name, league):
 
 
 # ----------------------------------------------------------------------
+# Résultats — envoyés en une fois chaque matin (voir main) : on cherche
+# les matchs terminés hier et aujourd'hui, un ID n'est mémorisé que si
+# le message est bien parti.
+# ----------------------------------------------------------------------
+
+def recent_dates():
+    """Dates (hier et aujourd'hui, heure de Paris) à interroger pour
+    retrouver les matchs terminés depuis le dernier envoi."""
+    now = datetime.now(ZoneInfo("Europe/Paris"))
+    return [(now - timedelta(days=d)).strftime("%Y%m%d") for d in (1, 0)]
+
+
+def fetch_scoreboard(sport_path, date_param):
+    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport_path}/scoreboard?dates={date_param}"
+    return requests.get(url, timeout=HTTP_TIMEOUT).json()
+
+
+# ----------------------------------------------------------------------
 # NBA — Miami Heat
 # ----------------------------------------------------------------------
 
 def check_nba(state):
-    url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
-    data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+    for date_param in recent_dates():
+        data = fetch_scoreboard("basketball/nba", date_param)
 
-    for event in data.get("events", []):
-        competitors = event["competitions"][0]["competitors"]
-        teams = [c["team"]["displayName"] for c in competitors]
-        if not any(name_matches(CONFIG["nba_team"], t) for t in teams):
-            continue
-        if event["status"]["type"]["name"] != "STATUS_FINAL":
-            continue
-        game_id = event["id"]
-        if game_id in state["nba"]:
-            continue
+        for event in data.get("events", []):
+            competitors = event["competitions"][0]["competitors"]
+            teams = [c["team"]["displayName"] for c in competitors]
+            if not any(name_matches(CONFIG["nba_team"], t) for t in teams):
+                continue
+            if event["status"]["type"]["name"] != "STATUS_FINAL":
+                continue
+            game_id = event["id"]
+            if game_id in state["nba"]:
+                continue
 
-        heat = next(c for c in competitors if name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
-        opp = next(c for c in competitors if not name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
-        heat_score, opp_score = int(heat["score"]), int(opp["score"])
+            heat = next(c for c in competitors if name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
+            opp = next(c for c in competitors if not name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
+            heat_score, opp_score = int(heat["score"]), int(opp["score"])
 
-        leaders = heat.get("leaders", [])
-        top_scorer_line = ""
-        if leaders:
-            pts_leader = leaders[0]["leaders"][0]
-            top_scorer_line = f"\n\nTop marqueur Miami : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
+            leaders = heat.get("leaders", [])
+            top_scorer_line = ""
+            if leaders:
+                pts_leader = leaders[0]["leaders"][0]
+                top_scorer_line = f"\n\nTop marqueur Miami : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
 
-        heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
+            heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
-        msg = (
-            f"<b>🏀 NBA</b>\n\n"
-            f"{CONFIG['nba_team']} {heat_score} - {opp_score} {opp['team']['displayName']}"
-            f"{top_scorer_line}"
-            f"\n\n📊 Bilan Miami : {heat_record}"
-        )
-        send_message(msg)
-        state["nba"].append(game_id)
+            msg = (
+                f"<b>🏀 NBA</b>\n\n"
+                f"{CONFIG['nba_team']} {heat_score} - {opp_score} {opp['team']['displayName']}"
+                f"{top_scorer_line}"
+                f"\n\n📊 Bilan Miami : {heat_record}"
+            )
+            if send_message(msg):
+                state["nba"].append(game_id)
 
 
 # ----------------------------------------------------------------------
@@ -250,82 +282,82 @@ def check_nba(state):
 # ----------------------------------------------------------------------
 
 def check_nfl(state):
-    url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
-    data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+    for date_param in recent_dates():
+        data = fetch_scoreboard("football/nfl", date_param)
 
-    for event in data.get("events", []):
-        competitors = event["competitions"][0]["competitors"]
-        teams = [c["team"]["displayName"] for c in competitors]
-        if not any(name_matches(CONFIG["nfl_team"], t) for t in teams):
-            continue
-        if event["status"]["type"]["name"] != "STATUS_FINAL":
-            continue
-        game_id = event["id"]
-        if game_id in state["nfl"]:
-            continue
+        for event in data.get("events", []):
+            competitors = event["competitions"][0]["competitors"]
+            teams = [c["team"]["displayName"] for c in competitors]
+            if not any(name_matches(CONFIG["nfl_team"], t) for t in teams):
+                continue
+            if event["status"]["type"]["name"] != "STATUS_FINAL":
+                continue
+            game_id = event["id"]
+            if game_id in state["nfl"]:
+                continue
 
-        broncos = next(c for c in competitors if name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
-        opp = next(c for c in competitors if not name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
-        b_score, o_score = int(broncos["score"]), int(opp["score"])
+            broncos = next(c for c in competitors if name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
+            opp = next(c for c in competitors if not name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
+            b_score, o_score = int(broncos["score"]), int(opp["score"])
 
-        leaders = broncos.get("leaders", [])
-        top_player_line = ""
-        if leaders:
-            leader = leaders[0]["leaders"][0]
-            top_player_line = f"\n\n🏈 Meilleur joueur Denver : {leader['athlete']['displayName']} — {leader['displayValue']}"
+            leaders = broncos.get("leaders", [])
+            top_player_line = ""
+            if leaders:
+                leader = leaders[0]["leaders"][0]
+                top_player_line = f"\n\n🏈 Meilleur joueur Denver : {leader['athlete']['displayName']} — {leader['displayValue']}"
 
-        broncos_record = broncos.get("records", [{}])[0].get("summary", "N/A")
+            broncos_record = broncos.get("records", [{}])[0].get("summary", "N/A")
 
-        msg = (
-            f"<b>🏈 NFL</b>\n\n"
-            f"{CONFIG['nfl_team']} {b_score} - {o_score} {opp['team']['displayName']}"
-            f"{top_player_line}"
-            f"\n\n📊 Bilan Denver : {broncos_record}"
-        )
-        send_message(msg)
-        state["nfl"].append(game_id)
+            msg = (
+                f"<b>🏈 NFL</b>\n\n"
+                f"{CONFIG['nfl_team']} {b_score} - {o_score} {opp['team']['displayName']}"
+                f"{top_player_line}"
+                f"\n\n📊 Bilan Denver : {broncos_record}"
+            )
+            if send_message(msg):
+                state["nfl"].append(game_id)
 
 
 # ----------------------------------------------------------------------
-# NHL — Colorado Avalanche, Vegas Golden Knights
+# NHL — Colorado Avalanche, Vegas Golden Knights, Montreal Canadiens
 # ----------------------------------------------------------------------
 
 def check_nhl(state):
-    url = "https://site.api.espn.com/apis/site/v2/sports/hockey/nhl/scoreboard"
-    data = requests.get(url, timeout=HTTP_TIMEOUT).json()
+    for date_param in recent_dates():
+        data = fetch_scoreboard("hockey/nhl", date_param)
 
-    for event in data.get("events", []):
-        competitors = event["competitions"][0]["competitors"]
-        team_names = [c["team"]["displayName"] for c in competitors]
-        followed = next((t for t in CONFIG["nhl_teams"] if any(name_matches(t, n) for n in team_names)), None)
-        if not followed:
-            continue
-        if event["status"]["type"]["name"] != "STATUS_FINAL":
-            continue
-        game_id = event["id"]
-        if game_id in state["nhl"]:
-            continue
+        for event in data.get("events", []):
+            competitors = event["competitions"][0]["competitors"]
+            team_names = [c["team"]["displayName"] for c in competitors]
+            followed = next((t for t in CONFIG["nhl_teams"] if any(name_matches(t, n) for n in team_names)), None)
+            if not followed:
+                continue
+            if event["status"]["type"]["name"] != "STATUS_FINAL":
+                continue
+            game_id = event["id"]
+            if game_id in state["nhl"]:
+                continue
 
-        team_comp = next(c for c in competitors if name_matches(followed, c["team"]["displayName"]))
-        opp_comp = next(c for c in competitors if not name_matches(followed, c["team"]["displayName"]))
-        team_score, opp_score = int(team_comp["score"]), int(opp_comp["score"])
+            team_comp = next(c for c in competitors if name_matches(followed, c["team"]["displayName"]))
+            opp_comp = next(c for c in competitors if not name_matches(followed, c["team"]["displayName"]))
+            team_score, opp_score = int(team_comp["score"]), int(opp_comp["score"])
 
-        leaders = team_comp.get("leaders", [])
-        top_line = ""
-        if leaders:
-            leader = leaders[0]["leaders"][0]
-            top_line = f"\n\nMeilleur pointeur {followed} : {leader['athlete']['displayName']} {leader['displayValue']} points"
+            leaders = team_comp.get("leaders", [])
+            top_line = ""
+            if leaders:
+                leader = leaders[0]["leaders"][0]
+                top_line = f"\n\nMeilleur pointeur {followed} : {leader['athlete']['displayName']} {leader['displayValue']} points"
 
-        team_record = team_comp.get("records", [{}])[0].get("summary", "N/A")
+            team_record = team_comp.get("records", [{}])[0].get("summary", "N/A")
 
-        msg = (
-            f"<b>🏒 NHL</b>\n\n"
-            f"{team_comp['team']['displayName']} {team_score} - {opp_score} {opp_comp['team']['displayName']}"
-            f"{top_line}"
-            f"\n\n📊 Bilan {followed} : {team_record}"
-        )
-        send_message(msg)
-        state["nhl"].append(game_id)
+            msg = (
+                f"<b>🏒 NHL</b>\n\n"
+                f"{team_comp['team']['displayName']} {team_score} - {opp_score} {opp_comp['team']['displayName']}"
+                f"{top_line}"
+                f"\n\n📊 Bilan {followed} : {team_record}"
+            )
+            if send_message(msg):
+                state["nhl"].append(game_id)
 
 
 # ----------------------------------------------------------------------
@@ -335,52 +367,53 @@ def check_nhl(state):
 def check_football(state):
     for league, clubs in CONFIG["football_clubs"].items():
         meta = FOOTBALL_LEAGUES.get(league, {"name": league, "flag": ""})
-        url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{league}/scoreboard"
-        data = requests.get(url, timeout=HTTP_TIMEOUT).json()
 
-        for event in data.get("events", []):
-            competitors = event["competitions"][0]["competitors"]
-            names = [c["team"]["displayName"] for c in competitors]
-            if not any(name_matches(club, n) for club in clubs for n in names):
-                continue
-            if event["status"]["type"]["name"] != "STATUS_FULL_TIME":
-                continue
-            game_id = event["id"]
-            if game_id in state["football"]:
-                continue
+        for date_param in recent_dates():
+            data = fetch_scoreboard(f"soccer/{league}", date_param)
 
-            home = next(c for c in competitors if c["homeAway"] == "home")
-            away = next(c for c in competitors if c["homeAway"] == "away")
+            for event in data.get("events", []):
+                competitors = event["competitions"][0]["competitors"]
+                names = [c["team"]["displayName"] for c in competitors]
+                if not any(name_matches(club, n) for club in clubs for n in names):
+                    continue
+                if event["status"]["type"]["name"] != "STATUS_FULL_TIME":
+                    continue
+                game_id = event["id"]
+                if game_id in state["football"]:
+                    continue
 
-            if league in NATIONAL_TEAM_LEAGUES:
-                title = f"⚽ {meta['name']}"
-            else:
-                title = f"⚽ {meta['name']} {meta['flag']}"
+                home = next(c for c in competitors if c["homeAway"] == "home")
+                away = next(c for c in competitors if c["homeAway"] == "away")
 
-            scorers_lines = []
-            team_names_by_id = {c["team"]["id"]: clean_team_name(c["team"]["displayName"]) for c in competitors}
-            details = event["competitions"][0].get("details", [])
-            goals = [d for d in details if d.get("scoringPlay")]
-            goals.sort(key=lambda d: d.get("clock", {}).get("value", 0))
-            for goal in goals:
-                minute = goal.get("clock", {}).get("displayValue", "?")
-                scorer_team = team_names_by_id.get(goal.get("team", {}).get("id"), "?")
-                athletes = goal.get("athletesInvolved", [])
-                scorer_name = athletes[0]["displayName"] if athletes else "?"
-                og = " (csc)" if goal.get("ownGoal") else ""
-                scorers_lines.append(f"{minute} {scorer_name}{og} ({scorer_team})")
+                if league in NATIONAL_TEAM_LEAGUES:
+                    title = f"⚽ {meta['name']}"
+                else:
+                    title = f"⚽ {meta['name']} {meta['flag']}"
 
-            scorers_block = ""
-            if scorers_lines:
-                scorers_block = "\n\n⚽ Buts :\n" + "\n".join(scorers_lines)
+                scorers_lines = []
+                team_names_by_id = {c["team"]["id"]: clean_team_name(c["team"]["displayName"]) for c in competitors}
+                details = event["competitions"][0].get("details", [])
+                goals = [d for d in details if d.get("scoringPlay")]
+                goals.sort(key=lambda d: d.get("clock", {}).get("value", 0))
+                for goal in goals:
+                    minute = goal.get("clock", {}).get("displayValue", "?")
+                    scorer_team = team_names_by_id.get(goal.get("team", {}).get("id"), "?")
+                    athletes = goal.get("athletesInvolved", [])
+                    scorer_name = athletes[0]["displayName"] if athletes else "?"
+                    og = " (csc)" if goal.get("ownGoal") else ""
+                    scorers_lines.append(f"{minute} {scorer_name}{og} ({scorer_team})")
 
-            msg = (
-                f"<b>{title}</b>\n\n"
-                f"{team_display(home['team']['displayName'], league)} {home['score']} - {away['score']} {team_display(away['team']['displayName'], league)}"
-                f"{scorers_block}"
-            )
-            send_message(msg)
-            state["football"].append(game_id)
+                scorers_block = ""
+                if scorers_lines:
+                    scorers_block = "\n\n⚽ Buts :\n" + "\n".join(scorers_lines)
+
+                msg = (
+                    f"<b>{title}</b>\n\n"
+                    f"{team_display(home['team']['displayName'], league)} {home['score']} - {away['score']} {team_display(away['team']['displayName'], league)}"
+                    f"{scorers_block}"
+                )
+                if send_message(msg):
+                    state["football"].append(game_id)
 
 
 # ----------------------------------------------------------------------
@@ -428,8 +461,8 @@ def check_f1(state):
     except (KeyError, IndexError):
         pass
 
-    send_message("\n".join(lines))
-    state["f1"].append(race_id)
+    if send_message("\n".join(lines)):
+        state["f1"].append(race_id)
 
 
 def check_f1_qualifying(state):
@@ -457,8 +490,8 @@ def check_f1_qualifying(state):
     for r in top5:
         lines.append(f"{r['position']}. {r['Driver']['familyName']} ({r['Constructor']['name']})")
 
-    send_message("\n".join(lines))
-    state["f1_qualifying"].append(quali_id)
+    if send_message("\n".join(lines)):
+        state["f1_qualifying"].append(quali_id)
 
 
 # ----------------------------------------------------------------------
@@ -840,17 +873,45 @@ def check_version_announcement(state):
 # Main
 # ----------------------------------------------------------------------
 
+RESULTS_HOUR = 8  # heure de Paris à partir de laquelle les résultats sont envoyés
+
+
 def main():
     state = load_state()
+    now_paris = datetime.now(ZoneInfo("Europe/Paris"))
+    today_str = now_paris.strftime("%Y-%m-%d")
+
+    # Messages ponctuels ou programmés à leur propre heure
     for check in (
-        check_version_announcement, check_nba, check_nfl, check_nhl, check_football, check_f1,
-        check_f1_qualifying, check_weather_alerts, check_matchday_announcement, check_birthday_announcement,
-        check_monthly_age_announcement, check_special_day_announcement, check_beatport_charts,
+        check_version_announcement, check_weather_alerts, check_birthday_announcement,
+        check_monthly_age_announcement, check_special_day_announcement,
     ):
         try:
             check(state)
         except Exception as e:
             print(f"[!] Erreur dans {check.__name__} : {e}")
+
+    # Résultats sportifs : un seul passage par jour, à partir de RESULTS_HOUR.
+    # La journée n'est marquée comme faite que si tout s'est bien passé,
+    # sinon le prochain passage du bot réessaie.
+    if now_paris.hour >= RESULTS_HOUR and state.get("results_digest_date") != today_str:
+        failures_before = len(SEND_FAILURES)
+        all_ok = True
+        for check in (check_nba, check_nfl, check_nhl, check_football, check_f1, check_f1_qualifying):
+            try:
+                check(state)
+            except Exception as e:
+                all_ok = False
+                print(f"[!] Erreur dans {check.__name__} : {e}")
+        if all_ok and len(SEND_FAILURES) == failures_before:
+            state["results_digest_date"] = today_str
+
+    for check in (check_matchday_announcement, check_beatport_charts):
+        try:
+            check(state)
+        except Exception as e:
+            print(f"[!] Erreur dans {check.__name__} : {e}")
+
     save_state(state)
 
 

@@ -25,10 +25,10 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.7"
+BOT_VERSION = "2.8"
 CHANGELOG = [
-    "Les résultats (NBA, NFL, NHL, foot, F1) sont maintenant envoyés une fois par jour, à partir de 8h",
-    "Correctif de fiabilité : les résultats NHL et les qualifications F1 pouvaient ne jamais partir",
+    "Résultats NHL : ajout du bilan de l'équipe et du meilleur pointeur, avec le nom de la franchise (ex: Bilan Avalanche)",
+    "NBA et NFL : le bilan et le meilleur joueur utilisent aussi le nom de la franchise (Heat, Broncos)",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -38,6 +38,11 @@ CONFIG = {
     "nba_team": "Miami Heat",
     "nfl_team": "Denver Broncos",
     "nhl_teams": ["Colorado Avalanche", "Vegas Golden Knights", "Montreal Canadiens"],
+    "nhl_short_names": {
+        "Colorado Avalanche": "Avalanche",
+        "Vegas Golden Knights": "Golden Knights",
+        "Montreal Canadiens": "Canadiens",
+    },
     "football_clubs": {
         "esp.1": ["Barcelona"],
         "fra.1": ["Marseille"],
@@ -263,7 +268,7 @@ def check_nba(state):
             top_scorer_line = ""
             if leaders:
                 pts_leader = leaders[0]["leaders"][0]
-                top_scorer_line = f"\n\nTop marqueur Miami : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
+                top_scorer_line = f"\n\nTop marqueur Heat : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
 
             heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
@@ -271,7 +276,7 @@ def check_nba(state):
                 f"<b>🏀 NBA</b>\n\n"
                 f"{CONFIG['nba_team']} {heat_score} - {opp_score} {opp['team']['displayName']}"
                 f"{top_scorer_line}"
-                f"\n\n📊 Bilan Miami : {heat_record}"
+                f"\n\n📊 Bilan Heat : {heat_record}"
             )
             if send_message(msg):
                 state["nba"].append(game_id)
@@ -304,7 +309,7 @@ def check_nfl(state):
             top_player_line = ""
             if leaders:
                 leader = leaders[0]["leaders"][0]
-                top_player_line = f"\n\n🏈 Meilleur joueur Denver : {leader['athlete']['displayName']} — {leader['displayValue']}"
+                top_player_line = f"\n\n🏈 Meilleur joueur Broncos : {leader['athlete']['displayName']} - {leader['displayValue']}"
 
             broncos_record = broncos.get("records", [{}])[0].get("summary", "N/A")
 
@@ -312,7 +317,7 @@ def check_nfl(state):
                 f"<b>🏈 NFL</b>\n\n"
                 f"{CONFIG['nfl_team']} {b_score} - {o_score} {opp['team']['displayName']}"
                 f"{top_player_line}"
-                f"\n\n📊 Bilan Denver : {broncos_record}"
+                f"\n\n📊 Bilan Broncos : {broncos_record}"
             )
             if send_message(msg):
                 state["nfl"].append(game_id)
@@ -342,11 +347,12 @@ def check_nhl(state):
             opp_comp = next(c for c in competitors if not name_matches(followed, c["team"]["displayName"]))
             team_score, opp_score = int(team_comp["score"]), int(opp_comp["score"])
 
+            short = CONFIG["nhl_short_names"].get(followed, followed)
             leaders = team_comp.get("leaders", [])
             top_line = ""
             if leaders:
                 leader = leaders[0]["leaders"][0]
-                top_line = f"\n\nMeilleur pointeur {followed} : {leader['athlete']['displayName']} {leader['displayValue']} points"
+                top_line = f"\n\nMeilleur pointeur {short} : {leader['athlete']['displayName']} {leader['displayValue']} points"
 
             team_record = team_comp.get("records", [{}])[0].get("summary", "N/A")
 
@@ -354,7 +360,7 @@ def check_nhl(state):
                 f"<b>🏒 NHL</b>\n\n"
                 f"{team_comp['team']['displayName']} {team_score} - {opp_score} {opp_comp['team']['displayName']}"
                 f"{top_line}"
-                f"\n\n📊 Bilan {followed} : {team_record}"
+                f"\n\n📊 Bilan {short} : {team_record}"
             )
             if send_message(msg):
                 state["nhl"].append(game_id)
@@ -448,7 +454,7 @@ def check_f1(state):
         driver_standings = standings["MRData"]["StandingsTable"]["StandingsLists"][0]["DriverStandings"]
         lines.append("\n📊 Classement pilotes (Top 5) :")
         for d in driver_standings[:5]:
-            lines.append(f"  {d['position']}. {d['Driver']['familyName']} — {d['points']} pts")
+            lines.append(f"  {d['position']}. {d['Driver']['familyName']} - {d['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -457,7 +463,7 @@ def check_f1(state):
         constructor_standings = constructor_standings_data["MRData"]["StandingsTable"]["StandingsLists"][0]["ConstructorStandings"]
         lines.append("\n📊 Classement constructeurs (Top 5) :")
         for c in constructor_standings[:5]:
-            lines.append(f"  {c['position']}. {c['Constructor']['name']} — {c['points']} pts")
+            lines.append(f"  {c['position']}. {c['Constructor']['name']} - {c['points']} pts")
     except (KeyError, IndexError):
         pass
 
@@ -726,7 +732,7 @@ def get_special_days(year):
         "01-01": f"🎉 Une toute nouvelle année démarre, {year} ! Que la santé, le bonheur et de belles réussites vous accompagnent tout au long de l'année, à vous, la famille Lebreton !",
         "02-14": "❤️ Aujourd'hui c'est la Saint-Valentin, une pensée pour tous ceux que vous aimez !",
         "05-01": "🤍 Bon 1er mai ! Un brin de muguet blanc et une belle journée de repos.",
-        "07-14": "🇫🇷 Joyeuse Fête Nationale ! Liberté, Égalité, Fraternité — vive la France !",
+        "07-14": "🇫🇷 Joyeuse Fête Nationale ! Liberté, Égalité, Fraternité - vive la France !",
         "10-31": "🎃👻 Joyeux Halloween ! Que la chasse aux bonbons soit fructueuse.",
         "12-25": "🎄✨ Joyeux Noël à vous, la famille Lebreton ! Que cette journée soit pleine de magie et de moments partagés.",
     }

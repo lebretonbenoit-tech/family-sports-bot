@@ -10,7 +10,8 @@
     "401909853",
     "401909871",
     "401909881",
-    "401909282"
+    "401909282",
+    "401909921"
   ],
   "nfl": [
     "401872940",
@@ -67,10 +68,10 @@
     "2026_18",
     "2026_19"
   ],
-  "matchday_sent_date": "2026-11-02",
-  "birthday_sent_date": "2026-11-02",
-  "monthly_age_sent_date": "2026-11-02",
-  "special_day_sent_date": "2026-11-02",
+  "matchday_sent_date": "2026-11-03",
+  "birthday_sent_date": "2026-11-03",
+  "monthly_age_sent_date": "2026-11-03",
+  "special_day_sent_date": "2026-11-03",
   "last_announced_version": "2.7",
   "beatport_status": {
     "Sonico BCN|techno-peak-time-driving|top-100": false,
@@ -89,11 +90,14 @@
     "Sonico BCN|melodic-house-techno|hype-100": false,
     "Sonico BCN|minimal-deep-tech|hype-100": false
   },
-  "beatport_sent_date": "2026-11-02",
-  "nhl": [],
+  "beatport_sent_date": "2026-11-03",
+  "nhl": [
+    "401892629",
+    "401892631"
+  ],
   "f1_qualifying": [
     "2026_19_quali"
   ],
-  "results_digest_date": "2026-11-02",
+  "results_digest_date": "2026-11-03",
   "weather_alert_status": {}
 }

@@ -25,10 +25,9 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.8"
+BOT_VERSION = "2.10"
 CHANGELOG = [
-    "Résultats NHL : ajout du bilan de l'équipe et du meilleur pointeur, avec le nom de la franchise (ex: Bilan Avalanche)",
-    "NBA et NFL : le bilan et le meilleur joueur utilisent aussi le nom de la franchise (Heat, Broncos)",
+    "Les résultats sportifs ne partent plus que le matin, entre 8h et 12h, jamais en soirée",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -242,10 +241,13 @@ def fetch_scoreboard(sport_path, date_param):
 
 
 # ----------------------------------------------------------------------
-# NBA — Miami Heat
+# NBA, NFL, NHL — regroupés dans un seul message (Heat, Broncos,
+# Avalanche / Golden Knights / Canadiens). Chaque collect_* retourne la
+# liste [(id_du_match, texte)] des matchs terminés pas encore annoncés.
 # ----------------------------------------------------------------------
 
-def check_nba(state):
+def collect_nba(state):
+    found = []
     for date_param in recent_dates():
         data = fetch_scoreboard("basketball/nba", date_param)
 
@@ -257,36 +259,22 @@ def check_nba(state):
             if event["status"]["type"]["name"] != "STATUS_FINAL":
                 continue
             game_id = event["id"]
-            if game_id in state["nba"]:
+            if game_id in state["nba"] or any(g == game_id for g, _text in found):
                 continue
 
             heat = next(c for c in competitors if name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
             opp = next(c for c in competitors if not name_matches(CONFIG["nba_team"], c["team"]["displayName"]))
-            heat_score, opp_score = int(heat["score"]), int(opp["score"])
-
-            leaders = heat.get("leaders", [])
-            top_scorer_line = ""
-            if leaders:
-                pts_leader = leaders[0]["leaders"][0]
-                top_scorer_line = f"\n\nTop marqueur Heat : {pts_leader['athlete']['displayName']} {pts_leader['displayValue']} points"
-
             heat_record = heat.get("records", [{}])[0].get("summary", "N/A")
 
-            msg = (
-                f"<b>🏀 NBA</b>\n\n"
-                f"{CONFIG['nba_team']} {heat_score} - {opp_score} {opp['team']['displayName']}"
-                f"{top_scorer_line}"
+            found.append((game_id, (
+                f"{CONFIG['nba_team']} {int(heat['score'])} - {int(opp['score'])} {opp['team']['displayName']}"
                 f"\n\n📊 Bilan Heat : {heat_record}"
-            )
-            if send_message(msg):
-                state["nba"].append(game_id)
+            )))
+    return found
 
 
-# ----------------------------------------------------------------------
-# NFL — Denver Broncos
-# ----------------------------------------------------------------------
-
-def check_nfl(state):
+def collect_nfl(state):
+    found = []
     for date_param in recent_dates():
         data = fetch_scoreboard("football/nfl", date_param)
 
@@ -298,36 +286,22 @@ def check_nfl(state):
             if event["status"]["type"]["name"] != "STATUS_FINAL":
                 continue
             game_id = event["id"]
-            if game_id in state["nfl"]:
+            if game_id in state["nfl"] or any(g == game_id for g, _text in found):
                 continue
 
             broncos = next(c for c in competitors if name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
             opp = next(c for c in competitors if not name_matches(CONFIG["nfl_team"], c["team"]["displayName"]))
-            b_score, o_score = int(broncos["score"]), int(opp["score"])
-
-            leaders = broncos.get("leaders", [])
-            top_player_line = ""
-            if leaders:
-                leader = leaders[0]["leaders"][0]
-                top_player_line = f"\n\n🏈 Meilleur joueur Broncos : {leader['athlete']['displayName']} - {leader['displayValue']}"
-
             broncos_record = broncos.get("records", [{}])[0].get("summary", "N/A")
 
-            msg = (
-                f"<b>🏈 NFL</b>\n\n"
-                f"{CONFIG['nfl_team']} {b_score} - {o_score} {opp['team']['displayName']}"
-                f"{top_player_line}"
+            found.append((game_id, (
+                f"{CONFIG['nfl_team']} {int(broncos['score'])} - {int(opp['score'])} {opp['team']['displayName']}"
                 f"\n\n📊 Bilan Broncos : {broncos_record}"
-            )
-            if send_message(msg):
-                state["nfl"].append(game_id)
+            )))
+    return found
 
 
-# ----------------------------------------------------------------------
-# NHL — Colorado Avalanche, Vegas Golden Knights, Montreal Canadiens
-# ----------------------------------------------------------------------
-
-def check_nhl(state):
+def collect_nhl(state):
+    found = []
     for date_param in recent_dates():
         data = fetch_scoreboard("hockey/nhl", date_param)
 
@@ -340,30 +314,40 @@ def check_nhl(state):
             if event["status"]["type"]["name"] != "STATUS_FINAL":
                 continue
             game_id = event["id"]
-            if game_id in state["nhl"]:
+            if game_id in state["nhl"] or any(g == game_id for g, _text in found):
                 continue
 
             team_comp = next(c for c in competitors if name_matches(followed, c["team"]["displayName"]))
             opp_comp = next(c for c in competitors if not name_matches(followed, c["team"]["displayName"]))
-            team_score, opp_score = int(team_comp["score"]), int(opp_comp["score"])
-
             short = CONFIG["nhl_short_names"].get(followed, followed)
-            leaders = team_comp.get("leaders", [])
-            top_line = ""
-            if leaders:
-                leader = leaders[0]["leaders"][0]
-                top_line = f"\n\nMeilleur pointeur {short} : {leader['athlete']['displayName']} {leader['displayValue']} points"
-
             team_record = team_comp.get("records", [{}])[0].get("summary", "N/A")
 
-            msg = (
-                f"<b>🏒 NHL</b>\n\n"
-                f"{team_comp['team']['displayName']} {team_score} - {opp_score} {opp_comp['team']['displayName']}"
-                f"{top_line}"
+            found.append((game_id, (
+                f"{team_comp['team']['displayName']} {int(team_comp['score'])} - {int(opp_comp['score'])} {opp_comp['team']['displayName']}"
                 f"\n\n📊 Bilan {short} : {team_record}"
-            )
-            if send_message(msg):
-                state["nhl"].append(game_id)
+            )))
+    return found
+
+
+def check_us_sports(state):
+    sections = [
+        ("🏀 NBA", "nba", collect_nba(state)),
+        ("🏈 NFL", "nfl", collect_nfl(state)),
+        ("🏒 NHL", "nhl", collect_nhl(state)),
+    ]
+
+    blocks = []
+    for title, _key, games in sections:
+        if games:
+            blocks.append(f"<b>{title}</b>\n\n" + "\n\n".join(text for _id, text in games))
+    if not blocks:
+        return
+
+    # Un seul message ; les ID ne sont mémorisés que s'il est bien parti
+    if send_message("\n\n".join(blocks)):
+        for _title, key, games in sections:
+            for game_id, _text in games:
+                state[key].append(game_id)
 
 
 # ----------------------------------------------------------------------
@@ -879,7 +863,8 @@ def check_version_announcement(state):
 # Main
 # ----------------------------------------------------------------------
 
-RESULTS_HOUR = 8  # heure de Paris à partir de laquelle les résultats sont envoyés
+RESULTS_HOUR = 8        # heure de Paris à partir de laquelle les résultats sont envoyés
+RESULTS_LAST_HOUR = 12  # passé cette heure, on attend le lendemain 8h plutôt que d'envoyer à une heure aléatoire
 
 
 def main():
@@ -900,10 +885,10 @@ def main():
     # Résultats sportifs : un seul passage par jour, à partir de RESULTS_HOUR.
     # La journée n'est marquée comme faite que si tout s'est bien passé,
     # sinon le prochain passage du bot réessaie.
-    if now_paris.hour >= RESULTS_HOUR and state.get("results_digest_date") != today_str:
+    if RESULTS_HOUR <= now_paris.hour < RESULTS_LAST_HOUR and state.get("results_digest_date") != today_str:
         failures_before = len(SEND_FAILURES)
         all_ok = True
-        for check in (check_nba, check_nfl, check_nhl, check_football, check_f1, check_f1_qualifying):
+        for check in (check_us_sports, check_football, check_f1, check_f1_qualifying):
             try:
                 check(state)
             except Exception as e:

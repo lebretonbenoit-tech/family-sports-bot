@@ -902,4 +902,15 @@ def main():
         failures_before = len(SEND_FAILURES)
         all_ok = True
         for check in (check_us_sports, check_football, check_f1, check_f1_qualifying):
-            if not run_che
+            if not run_check(check, state):
+                all_ok = False
+        if all_ok and len(SEND_FAILURES) == failures_before:
+            state["results_digest_date"] = today_str
+            save_state(state)
+
+    for check in (check_matchday_announcement, check_beatport_charts):
+        run_check(check, state)
+
+
+if __name__ == "__main__":
+    main()

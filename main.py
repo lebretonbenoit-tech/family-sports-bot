@@ -25,9 +25,11 @@ HTTP_TIMEOUT = (5, 10)
 # À modifier à chaque mise à jour du bot : le bot enverra automatiquement
 # ce message une seule fois, dès qu'il détecte un numéro de version différent
 # de celui déjà annoncé.
-BOT_VERSION = "2.10"
+BOT_VERSION = "2.11"
 CHANGELOG = [
-    "Les résultats sportifs ne partent plus que le matin, entre 8h et 12h, jamais en soirée",
+    "Résultats NBA, NFL et NHL regroupés dans un seul message chaque matin, avec le bilan et sans meilleur marqueur",
+    "Résultats sportifs envoyés le matin à partir de 8h, plus jamais en soirée",
+    "Correctif contre les messages en double",
 ]
 
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -867,6 +869,20 @@ RESULTS_HOUR = 8        # heure de Paris à partir de laquelle les résultats so
 RESULTS_LAST_HOUR = 12  # passé cette heure, on attend le lendemain 8h plutôt que d'envoyer à une heure aléatoire
 
 
+def run_check(check, state):
+    """Exécute une étape puis écrit l'état sur le disque tout de suite : si une
+    étape suivante est interrompue (timeout), ce qui a déjà été envoyé reste
+    enregistré et ne sera pas renvoyé. Retourne True si l'étape s'est bien passée."""
+    try:
+        check(state)
+        ok = True
+    except Exception as e:
+        print(f"[!] Erreur dans {check.__name__} : {e}")
+        ok = False
+    save_state(state)
+    return ok
+
+
 def main():
     state = load_state()
     now_paris = datetime.now(ZoneInfo("Europe/Paris"))
@@ -877,34 +893,13 @@ def main():
         check_version_announcement, check_weather_alerts, check_birthday_announcement,
         check_monthly_age_announcement, check_special_day_announcement,
     ):
-        try:
-            check(state)
-        except Exception as e:
-            print(f"[!] Erreur dans {check.__name__} : {e}")
+        run_check(check, state)
 
-    # Résultats sportifs : un seul passage par jour, à partir de RESULTS_HOUR.
-    # La journée n'est marquée comme faite que si tout s'est bien passé,
-    # sinon le prochain passage du bot réessaie.
+    # Résultats sportifs : un seul passage par jour, dès que le bot passe après
+    # RESULTS_HOUR. La journée n'est marquée comme faite que si tout s'est bien
+    # passé, sinon le prochain passage du bot réessaie.
     if RESULTS_HOUR <= now_paris.hour < RESULTS_LAST_HOUR and state.get("results_digest_date") != today_str:
         failures_before = len(SEND_FAILURES)
         all_ok = True
         for check in (check_us_sports, check_football, check_f1, check_f1_qualifying):
-            try:
-                check(state)
-            except Exception as e:
-                all_ok = False
-                print(f"[!] Erreur dans {check.__name__} : {e}")
-        if all_ok and len(SEND_FAILURES) == failures_before:
-            state["results_digest_date"] = today_str
-
-    for check in (check_matchday_announcement, check_beatport_charts):
-        try:
-            check(state)
-        except Exception as e:
-            print(f"[!] Erreur dans {check.__name__} : {e}")
-
-    save_state(state)
-
-
-if __name__ == "__main__":
-    main()
+            if not run_che

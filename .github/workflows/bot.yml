@@ -1,0 +1,60 @@
+name: Run family sports bot
+
+on:
+  schedule:
+    # Matin : toutes les 5 minutes de 5h à 9h59 UTC (6h-10h59 Paris l'hiver,
+    # 7h-11h59 l'été), ce qui couvre 8h Paris toute l'année. Les minutes
+    # évitent le début d'heure, moment où GitHub retarde le plus les exécutions.
+    - cron: "2-57/5 5-9 * * *"
+    # Reste de la journée : toutes les 15 minutes
+    - cron: "7,22,37,52 0-4,10-23 * * *"
+  workflow_dispatch: {}
+
+# Jamais deux exécutions en même temps : sinon elles envoient les mêmes
+# messages en double
+concurrency:
+  group: family-sports-bot
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Lancer le bot
+        timeout-minutes: 4
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py
+
+      # always() : l'état est enregistré même si le bot a été interrompu,
+      # sinon les messages déjà envoyés seraient renvoyés au passage suivant
+      - name: Sauvegarder l'état
+        if: always()
+        run: |
+          git config user.name "bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add state.json
+          if git diff --staged --quiet; then
+            exit 0
+          fi
+          git commit -m "update state"
+          for i in 1 2 3; do
+            if git pull --rebase origin main && git push; then
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            sleep 5
+          done
+          exit 1
